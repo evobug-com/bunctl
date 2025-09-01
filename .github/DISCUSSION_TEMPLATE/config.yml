@@ -1,0 +1,25 @@
+## Welcome to bunctl Discussions! 🚀
+
+We're using GitHub Discussions as a place for the bunctl community to connect, share ideas, and help each other. Whether you're deploying Bun applications in production or just getting started with process management, this is your space!
+
+### What to discuss here:
+
+* **Q&A**: Ask questions about bunctl usage, troubleshooting, or best practices
+* **Ideas**: Share feature requests and enhancement proposals
+* **Show and Tell**: Share your bunctl configurations, deployment strategies, or success stories
+* **General**: Discuss Bun ecosystem, systemd tips, or process management topics
+
+### Before posting:
+
+1. Check the [README](https://github.com/evobug-com/bunctl#readme) for documentation
+2. Search existing discussions to avoid duplicates
+3. Use the appropriate category for your topic
+
+### Community Guidelines:
+
+* Be respectful and constructive
+* Share your knowledge and help others
+* Report bugs via [Issues](https://github.com/evobug-com/bunctl/issues), not Discussions
+* Remember: bunctl is actively used internally by Evobug but is still evolving
+
+Welcome aboard! Tell us about your use case and what brings you to bunctl! 🎉
