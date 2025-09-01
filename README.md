@@ -2,7 +2,7 @@
 
 > **Production-grade process manager for Bun applications using systemd**
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/yourusername/bunctl)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/evobug-com/bunctl)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/bun-%E2%89%A51.0.0-f472b6.svg)](https://bun.sh)
 [![systemd](https://img.shields.io/badge/systemd-required-orange.svg)](https://systemd.io/)
@@ -44,7 +44,7 @@
 
 ```bash
 # Install bunctl
-sudo curl -o /usr/local/bin/bunctl https://raw.githubusercontent.com/yourusername/bunctl/main/bunctl
+sudo curl -o /usr/local/bin/bunctl https://raw.githubusercontent.com/evobug-com/bunctl/main/bunctl
 sudo chmod +x /usr/local/bin/bunctl
 
 # Navigate to your app
@@ -74,10 +74,10 @@ bunctl status
 
 ```bash
 # Download and install in one command
-curl -fsSL https://raw.githubusercontent.com/yourusername/bunctl/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/evobug-com/bunctl/main/install.sh | bash
 
 # Or manually
-sudo wget -O /usr/local/bin/bunctl https://raw.githubusercontent.com/yourusername/bunctl/main/bunctl
+sudo wget -O /usr/local/bin/bunctl https://raw.githubusercontent.com/evobug-com/bunctl/main/bunctl
 sudo chmod +x /usr/local/bin/bunctl
 
 # Verify installation
@@ -972,8 +972,8 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/bunctl/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/bunctl/discussions)
+- **Issues**: [GitHub Issues](https://github.com/evobug-com/bunctl/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/evobug-com/bunctl/discussions)
 - **Security**: Report vulnerabilities privately via GitHub Security Advisories
 
 ---
@@ -981,5 +981,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 <p align="center">
   Made with ❤️ for the Bun community
   <br>
-  <a href="https://github.com/yourusername/bunctl">Star us on GitHub</a>
+  <a href="https://github.com/evobug-com/bunctl">Star us on GitHub</a>
 </p>
