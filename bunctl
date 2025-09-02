@@ -656,9 +656,10 @@ stop_app() {
     log_success "Stopped: $app_name"
 }
 
-# Restart an app
+# Restart an app with proper sequencing
 restart_app() {
     local app_name="$1"
+    local grace_period="${2:-2}"  # Default 2 second grace period
     local service_name=$(get_service_name "$app_name")
     local service_file="$SYSTEMD_DIR/$service_name.service"
     
@@ -679,8 +680,31 @@ restart_app() {
         fi
     fi
 
-    sudo systemctl restart "$service_name"
-    log_success "Restarted: $app_name"
+    # Stop the service first
+    sudo systemctl stop "$service_name"
+    
+    # Wait for service to fully stop
+    local max_wait=10
+    local waited=0
+    while [[ $(systemctl is-active "$service_name") != "inactive" ]] && [[ $waited -lt $max_wait ]]; do
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    
+    # Add grace period to ensure ports are released
+    sleep "$grace_period"
+    
+    # Start the service
+    sudo systemctl start "$service_name"
+    
+    # Verify it started successfully
+    if systemctl is-active --quiet "$service_name"; then
+        log_success "Restarted: $app_name"
+    else
+        log_error "Failed to restart: $app_name"
+        sudo journalctl -u "$service_name" -n 5 --no-pager
+        exit 1
+    fi
 }
 
 # Delete an app
@@ -1596,9 +1620,22 @@ case "${1:-}" in
         if [[ -z "$services" ]]; then
             log_warn "No applications found to restart"
         else
+            # First stop all services
+            log_info "Stopping all services..."
             while IFS= read -r service; do
                 if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl restart "$service" 2>/dev/null || true
+                    sudo systemctl stop "$service" 2>/dev/null || true
+                fi
+            done <<< "$services"
+            
+            # Wait for all to stop with grace period
+            sleep 2
+            
+            # Then start all services
+            log_info "Starting all services..."
+            while IFS= read -r service; do
+                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
+                    sudo systemctl start "$service" 2>/dev/null || true
                     log_success "Restarted: $(echo $service | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')"
                 fi
             done <<< "$services"
