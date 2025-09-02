@@ -1,1908 +1,662 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# bunctl — production-grade process manager for Bun apps on systemd
+# Rebuilt for reliability and clarity. Not backward compatible with 2.x service layout.
+# Version: 3.0.0
 
-# bunctl - A pm2-like tool for managing Bun applications with systemd
-# Version: 2.3.0
-# Place this in /usr/local/bin/bunctl and chmod +x
+set -Eeuo pipefail
+IFS=$'\n\t'
 
-set -e
+# ----------------------------
+# Globals & defaults
+# ----------------------------
+VERSION="3.0.0"
+UNIT_BASENAME="bunctl@.service"         # template unit
+UNIT_PREFIX="bunctl@"                    # instance prefix, e.g. bunctl@api.service
 
-# Debug mode
-DEBUG="${BUNCTL_DEBUG:-false}"
-if [[ "$1" == "--debug" ]] || [[ "$DEBUG" == "true" ]]; then
-    DEBUG=true
-    set -x  # Enable bash debug output
-    shift  # Remove --debug from arguments
+# Mode: "system" (root, services live in /etc/systemd/system)
+#    or "user"   (non-root, services live in ~/.config/systemd/user)
+MODE="${BUNCTL_MODE:-auto}"
+
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+CFG_DIR="$XDG_CONFIG_HOME/bunctl"
+APPS_DIR="$CFG_DIR/apps"                 # per-app json configs (optional)
+ENV_DIR_SYSTEM="/etc/bunctl"             # env files for system units
+ENV_DIR_USER="$CFG_DIR/env"              # env files for user units
+LOG_ID_PREFIX="bunctl"                   # journald syslog identifier prefix
+
+# Colors (disable if not a tty)
+if [[ -t 1 ]]; then
+  RED=$'\e[31m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; BLUE=$'\e[34m'; MAGENTA=$'\e[35m'; CYAN=$'\e[36m'; BOLD=$'\e[1m'; RESET=$'\e[0m'
+else
+  RED=""; GREEN=""; YELLOW=""; BLUE=""; MAGENTA=""; CYAN=""; BOLD=""; RESET=""
 fi
 
-# Configuration
-SYSTEMD_DIR="/etc/systemd/system"
-SERVICE_PREFIX="bun-app"
-SITES_DIR="/var/www/sites"  # Adjust this to your sites directory
-CONFIG_DIR="$HOME/.config/bunctl"
-DB_FILE="$CONFIG_DIR/apps.db"
-VERSION="2.3.0"
+debug=false
+if [[ "${BUNCTL_DEBUG:-}" == "1" ]] || [[ "${1:-}" == "--debug" ]]; then
+  debug=true
+  set -x
+  [[ "${1:-}" == "--debug" ]] && shift
+fi
 
-# Colors - using printf-compatible format
-RED=$'\e[0;31m'
-GREEN=$'\e[0;32m'
-YELLOW=$'\e[1;33m'
-BLUE=$'\e[0;34m'
-CYAN=$'\e[0;36m'
-MAGENTA=$'\e[0;35m'
-NC=$'\e[0m' # No Color
+# ----------------------------
+# Utils
+# ----------------------------
+die() { echo >&2 "${RED}✖ ${1}${RESET}"; exit "${2:-1}"; }
+info(){ echo "${BLUE}ℹ ${1}${RESET}"; }
+ok()  { echo "${GREEN}✔ ${1}${RESET}"; }
+warn(){ echo "${YELLOW}⚠ ${1}${RESET}"; }
+dbg() { $debug && echo >&2 "${MAGENTA}[debug] ${1}${RESET}" || true; }
 
-# Ensure config directory exists
-mkdir -p "$CONFIG_DIR"
-mkdir -p "$CONFIG_DIR/backups"
-touch "$DB_FILE"
+require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
 
-# Helper functions
-log_success() { echo -e "${GREEN}✅${NC} $1"; }
-log_error() { echo -e "${RED}❌${NC} $1"; }
-log_info() { echo -e "${BLUE}ℹ️${NC} $1"; }
-log_warn() { echo -e "${YELLOW}⚠️${NC} $1"; }
-log_debug() { 
-    if [[ "$DEBUG" == "true" ]]; then
-        echo -e "${MAGENTA}[DEBUG]${NC} $1" >&2
-    fi
+is_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
+
+sc() {
+  # Wrapper around systemctl honoring MODE and --user/--system override
+  local sc_args=()
+  if [[ "$MODE" == "auto" ]]; then
+    if is_root; then sc_args=(); else sc_args=(--user); fi
+  elif [[ "$MODE" == "user" ]]; then
+    sc_args=(--user)
+  else
+    sc_args=()
+  fi
+  systemctl "${sc_args[@]}" "$@"
 }
 
-get_app_name() {
-    local path="$1"
-    # Generate app name from path
-    echo "$path" | sed "s|$SITES_DIR/||" | sed 's|/|-|g' | sed 's|[^a-zA-Z0-9-]||g'
+jc() {
+  # journalctl wrapper for correct user/system context
+  local jc_args=()
+  if [[ "$MODE" == "auto" ]]; then
+    if is_root; then jc_args=(); else jc_args=(--user); fi
+  elif [[ "$MODE" == "user" ]]; then
+    jc_args=(--user)
+  else
+    jc_args=()
+  fi
+  journalctl "${jc_args[@]}" "$@"
 }
 
-get_service_name() {
-    echo "${SERVICE_PREFIX}-$1"
+# sanitize app name to [a-z0-9-._]
+sanitize_name() {
+  local n="$1"
+  n="${n// /-}"
+  n="$(echo "$n" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+  [[ -z "$n" ]] && die "Empty/invalid app name"
+  printf "%s" "$n"
 }
 
-# Format memory size with appropriate units
-format_memory() {
-    local kb="$1"
-    if [[ -z "$kb" ]] || [[ "$kb" == "0" ]]; then
-        echo "-"
-        return
-    fi
-    
-    # Convert KB to appropriate unit
-    if [[ $kb -lt 1024 ]]; then
-        echo "${kb} KB"
-    elif [[ $kb -lt 1048576 ]]; then
-        echo "$(awk "BEGIN {printf \"%.1f\", $kb/1024}") MB"
-    else
-        echo "$(awk "BEGIN {printf \"%.1f\", $kb/1048576}") GB"
-    fi
-}
-
-# Rotate logs asynchronously with file locking
-rotate_logs_async() {
-    local working_dir="$1"
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    
-    # Ensure logs directory exists
-    mkdir -p "$working_dir/logs"
-    
-    # Rotate app.log with file locking
-    if [[ -f "$working_dir/logs/app.log" ]]; then
-        (
-            flock -n 200 || exit 1  # Non-blocking lock, exit if can't acquire
-            if [[ -s "$working_dir/logs/app.log" ]]; then
-                cp "$working_dir/logs/app.log" "$working_dir/logs/app.${timestamp}.log" 2>/dev/null
-                > "$working_dir/logs/app.log"  # Truncate instead of move to avoid file handle issues
-            fi
-            # Keep only last 10 log files
-            ls -t "$working_dir/logs"/app.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        ) 200>"$working_dir/logs/.app.log.lock" &
-    fi
-    
-    # Rotate error.log with file locking
-    if [[ -f "$working_dir/logs/error.log" ]]; then
-        (
-            flock -n 201 || exit 1  # Non-blocking lock, exit if can't acquire
-            if [[ -s "$working_dir/logs/error.log" ]]; then
-                cp "$working_dir/logs/error.log" "$working_dir/logs/error.${timestamp}.log" 2>/dev/null
-                > "$working_dir/logs/error.log"  # Truncate instead of move
-            fi
-            # Keep only last 10 log files
-            ls -t "$working_dir/logs"/error.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        ) 201>"$working_dir/logs/.error.log.lock" &
-    fi
-}
-
-# Auto-detect common entry files
-auto_detect_entry() {
-    local app_dir="$1"
-    
-    # Check for .bunctl.json config first
-    if [[ -f "$app_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
-        local config_entry=$(jq -r '.entry // ""' "$app_dir/.bunctl.json" 2>/dev/null)
-        if [[ -n "$config_entry" ]] && [[ -f "$app_dir/$config_entry" ]]; then
-            echo "$config_entry"
-            return 0
-        fi
-    fi
-    
-    # Common entry file patterns
-    local patterns=(
-        "src/server.ts" "src/index.ts" "src/main.ts" "src/app.ts"
-        "server.ts" "index.ts" "main.ts" "app.ts"
-        "src/server.js" "src/index.js" "src/main.js" "src/app.js"
-        "server.js" "index.js" "main.js" "app.js"
-        "private/server.ts" "private/index.ts" "private/main.ts"
-    )
-    
-    for file in "${patterns[@]}"; do
-        if [[ -f "$app_dir/$file" ]]; then
-            echo "$file"
-            return 0
-        fi
+bun_path() {
+  local p=""
+  if command -v bun >/dev/null 2>&1; then p="$(command -v bun)"; fi
+  if [[ -z "$p" ]]; then
+    # common locations
+    for cand in "$HOME/.bun/bin/bun" "/usr/local/bin/bun" "/usr/bin/bun"; do
+      [[ -x "$cand" ]] && p="$cand" && break
     done
-    
-    echo "index.ts"  # Default fallback
+  fi
+  [[ -z "$p" ]] && die "Bun executable not found. Install Bun and ensure it's on PATH."
+  printf "%s" "$p"
 }
 
-# Load config from .bunctl.json if exists
-load_config() {
-    local app_dir="$1"
-    local config_file="$app_dir/.bunctl.json"
-    
-    if [[ -f "$config_file" ]] && command -v jq &> /dev/null; then
-        export BUNCTL_CONFIG="$config_file"
-        export BUNCTL_NAME=$(jq -r '.name // ""' "$config_file" 2>/dev/null)
-        export BUNCTL_ENTRY=$(jq -r '.entry // ""' "$config_file" 2>/dev/null)
-        export BUNCTL_PORT=$(jq -r '.port // ""' "$config_file" 2>/dev/null)
-        export BUNCTL_ENV=$(jq -r '.env // {}' "$config_file" 2>/dev/null)
-        export BUNCTL_MEMORY=$(jq -r '.memory // "512M"' "$config_file" 2>/dev/null)
-        export BUNCTL_CPU=$(jq -r '.cpu // "50"' "$config_file" 2>/dev/null)
-        export BUNCTL_AUTOSTART=$(jq -r '.autostart // true' "$config_file" 2>/dev/null)
-        export BUNCTL_RESTART_DELAY=$(jq -r '.restart_delay // "10"' "$config_file" 2>/dev/null)
-        export BUNCTL_MAX_RESTARTS=$(jq -r '.max_restarts // "3"' "$config_file" 2>/dev/null)
-        export BUNCTL_RUNTIME=$(jq -r '.runtime // "bun"' "$config_file" 2>/dev/null)
-        return 0
-    fi
-    
-    return 1
+# Resolve paths depending on mode
+unit_dir() {
+  if [[ "$MODE" == "user" || ( "$MODE" == "auto" && ! $(is_root) ) ]]; then
+    printf "%s" "$HOME/.config/systemd/user"
+  else
+    printf "%s" "/etc/systemd/system"
+  fi
 }
 
-# Initialize/add an app in current directory
-init_app() {
-    local app_dir="$(pwd)"
-    local app_name="${1:-}"
-    local entry_file="${2:-}"
-    local port="${3:-}"
-    
-    # Load config if exists
-    if load_config "$app_dir"; then
-        log_info "Using configuration from .bunctl.json"
-        
-        # Use values from config file if not provided via CLI
-        if [[ -z "$app_name" ]] && [[ -n "$BUNCTL_NAME" ]]; then
-            app_name="$BUNCTL_NAME"
-            log_info "Using app name from config: $app_name"
-        fi
-        
-        if [[ -z "$entry_file" ]] && [[ -n "$BUNCTL_ENTRY" ]]; then
-            entry_file="$BUNCTL_ENTRY"
-            log_info "Using entry file from config: $entry_file"
-        fi
-        
-        if [[ -z "$port" ]] && [[ -n "$BUNCTL_PORT" ]]; then
-            port="$BUNCTL_PORT"
-        fi
-    fi
-    
-    # Generate app name if still not set
-    if [[ -z "$app_name" ]]; then
-        app_name=$(get_app_name "$app_dir")
-    fi
-    
-    # Auto-detect entry file if not provided
-    if [[ -z "$entry_file" ]]; then
-        entry_file=$(auto_detect_entry "$app_dir")
-        log_info "Auto-detected entry file: $entry_file"
-    fi
+unit_template_path() { printf "%s/%s" "$(unit_dir)" "$UNIT_BASENAME"; }
 
-    # Check if we're in a valid directory
-    if [[ ! "$app_dir" == "$SITES_DIR"* ]]; then
-        log_warn "Current directory is not under $SITES_DIR"
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
+instance_unit_name() { printf "%s%s.service" "$UNIT_PREFIX" "$1"; }         # e.g. bunctl@api.service
+instance_dropin_dir() { printf "%s/%s.d" "$(unit_dir)" "$(instance_unit_name "$1")"; }
+instance_dropin() { printf "%s/10-bunctl.conf" "$(instance_dropin_dir "$1")"; }
 
-    # Check if entry file exists
-    if [[ ! -f "$app_dir/$entry_file" ]]; then
-        log_error "Entry file not found: $entry_file"
-        log_info "Looking in: $app_dir/$entry_file"
-        exit 1
-    fi
+env_file_path() {
+  local name="$1"
+  if [[ "$MODE" == "user" || ( "$MODE" == "auto" && ! $(is_root) ) ]]; then
+    printf "%s/%s.env" "$ENV_DIR_USER" "$name"
+  else
+    printf "%s/%s.env" "$ENV_DIR_SYSTEM" "$name"
+  fi
+}
 
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
+config_path() { printf "%s/%s.json" "$APPS_DIR" "$1"; }
 
-    # Determine working directory
-    local working_dir="$app_dir"
+# Ensure directories exist
+ensure_dirs() {
+  mkdir -p "$CFG_DIR" "$APPS_DIR" "$ENV_DIR_USER"
+  if is_root; then mkdir -p "$ENV_DIR_SYSTEM"; fi
+  mkdir -p "$(unit_dir)"
+}
 
-    log_info "Creating service: $service_name"
-    
-    # Rotate logs asynchronously before starting
-    rotate_logs_async "$app_dir"
-    
-    # Find Bun executable - check common locations
-    local bun_path=""
-    # Try which first as it's most reliable
-    if command -v bun &> /dev/null; then
-        bun_path=$(which bun)
-    else
-        # Check common locations if which doesn't work
-        for path in /usr/local/bin/bun /usr/bin/bun $HOME/.bun/bin/bun /home/*/.bun/bin/bun; do
-            if [[ -x "$path" ]]; then
-                bun_path="$path"
-                break
-            fi
-        done
-    fi
-    
-    if [[ -z "$bun_path" ]]; then
-        log_error "Bun executable not found! Please ensure Bun is installed."
-        log_info "Install with: curl -fsSL https://bun.sh/install | bash"
-        exit 1
-    fi
-    
-    log_info "Using Bun at: $bun_path"
-    
-    # Determine runtime flags
-    local runtime_flag=""
-    if [[ "${BUNCTL_RUNTIME:-bun}" == "bun" ]]; then
-        runtime_flag="--bun"
-        log_info "Runtime mode: Bun (fast, native)"
-    else
-        runtime_flag=""
-        log_info "Runtime mode: Node.js compatibility"
-    fi
-
-    # Determine logging mode (journal for non-blocking, file for legacy)
-    local log_mode="${BUNCTL_LOG_MODE:-journal}"
-    
-    # Create service file with enhanced features
-    if [[ "$log_mode" == "journal" ]]; then
-        # Use systemd journal for non-blocking logging
-        sudo tee "$service_file" > /dev/null << EOF
+# ----------------------------
+# Unit template
+# ----------------------------
+write_unit_template() {
+  ensure_dirs
+  local tpl="$(unit_template_path)"
+  if [[ -f "$tpl" ]]; then
+    dbg "Unit template already exists: $tpl"
+    return
+  fi
+  info "Writing unit template: $tpl"
+  cat >"$tpl" <<'UNIT'
 [Unit]
-Description=Bun App - $app_name
-After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=3
-
-[Service]
-Type=simple
-User=$(whoami)
-Group=www-data
-WorkingDirectory=$working_dir
-ExecStart=$bun_path $runtime_flag $working_dir/$entry_file
-ExecReload=/bin/kill -USR1 \$MAINPID
-Restart=always
-RestartSec=${BUNCTL_RESTART_DELAY:-10}
-StartLimitBurst=${BUNCTL_MAX_RESTARTS:-3}
-SyslogIdentifier=$app_name
-StandardOutput=journal
-StandardError=journal
-Environment="NODE_ENV=production"
-Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
-EOF
-    else
-        # Legacy file-based logging (may cause blocking)
-        sudo tee "$service_file" > /dev/null << EOF
-[Unit]
-Description=Bun App - $app_name
-After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=3
-
-[Service]
-Type=simple
-User=$(whoami)
-Group=www-data
-WorkingDirectory=$working_dir
-ExecStartPre=/bin/sh -c 'echo "\\n===== Service started at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====" >> $app_dir/logs/app.log'
-ExecStart=/bin/sh -c '$bun_path $runtime_flag $working_dir/$entry_file 2>&1 | while IFS= read -r line; do echo "[\$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\")] \$line"; done >> $app_dir/logs/app.log 2>> $app_dir/logs/error.log'
-ExecReload=/bin/kill -USR1 \$MAINPID
-ExecStopPost=/bin/sh -c 'echo "===== Service stopped at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====\\n" >> $app_dir/logs/app.log'
-Restart=always
-RestartSec=${BUNCTL_RESTART_DELAY:-10}
-StartLimitBurst=${BUNCTL_MAX_RESTARTS:-3}
-SyslogIdentifier=$app_name
-Environment="NODE_ENV=production"
-Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
-EOF
-    fi
-
-    # Add environment file if it exists
-    if [[ -f "$app_dir/config/.env" ]]; then
-        echo "EnvironmentFile=$app_dir/config/.env" | sudo tee -a "$service_file" > /dev/null
-    elif [[ -f "$app_dir/.env" ]]; then
-        echo "EnvironmentFile=$app_dir/.env" | sudo tee -a "$service_file" > /dev/null
-    fi
-
-    # Add port if specified
-    if [[ -n "$port" ]]; then
-        echo "Environment=\"PORT=$port\"" | sudo tee -a "$service_file" > /dev/null
-    fi
-    
-    # Add environment variables from config
-    if [[ -n "$BUNCTL_ENV" ]] && [[ "$BUNCTL_ENV" != "{}" ]]; then
-        echo "$BUNCTL_ENV" | jq -r 'to_entries[] | "Environment=\"\(.key)=\(.value)\""' | sudo tee -a "$service_file" > /dev/null
-    fi
-
-    # Add resource limits
-    local memory_limit="${BUNCTL_MEMORY:-512M}"
-    local cpu_quota="${BUNCTL_CPU:-50}"
-    
-    sudo tee -a "$service_file" > /dev/null << EOF
-
-# Resource limits
-MemoryMax=$memory_limit
-CPUQuota=${cpu_quota}%
-TasksMax=100
-
-# Security
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=$app_dir
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Create logs directory if it doesn't exist
-    mkdir -p "$app_dir/logs"
-
-    # Save to database
-    echo "$app_name|$app_dir|$entry_file|$(date +%s)|enabled" >> "$DB_FILE"
-
-    # Reload systemd
-    sudo systemctl daemon-reload
-    
-    # Enable for boot if autostart is true (default)
-    if [[ "${BUNCTL_AUTOSTART:-true}" == "true" ]]; then
-        sudo systemctl enable "$service_name" 2>/dev/null
-        log_info "Service will auto-start on boot"
-    else
-        log_info "Auto-start on boot is disabled (per config)"
-    fi
-
-    log_success "Service created: $service_name"
-    log_info "Start with: bunctl start $app_name"
-}
-
-# Set environment variable for an app
-set_env() {
-    local app_name="$1"
-    local env_var="$2"
-    
-    if [[ -z "$env_var" ]] || [[ ! "$env_var" =~ ^[A-Z_][A-Z0-9_]*=.+$ ]]; then
-        log_error "Invalid environment variable format. Use: KEY=value"
-        exit 1
-    fi
-    
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
-    
-    if [[ ! -f "$service_file" ]]; then
-        log_error "Service not found: $app_name"
-        exit 1
-    fi
-    
-    # Add environment variable to service file
-    sudo sed -i "/^\[Service\]/a Environment=\"$env_var\"" "$service_file"
-    sudo systemctl daemon-reload
-    
-    log_success "Environment variable added: $env_var"
-    log_info "Restart the app to apply: bunctl restart $app_name"
-}
-
-# Diagnose issues with an app
-diagnose_app() {
-    local app_name="$1"
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
-    
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}Diagnostic Report: $app_name${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
-    # Check if service exists
-    if [[ ! -f "$service_file" ]]; then
-        log_error "Service file not found: $service_file"
-        exit 1
-    fi
-    
-    # Extract service configuration
-    local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
-    local exec_start=$(grep "^ExecStart=" "$service_file" | sed 's/^ExecStart=//')
-    local user=$(grep "^User=" "$service_file" | sed 's/^User=//')
-    
-    echo -e "${YELLOW}Service Configuration:${NC}"
-    echo "  Service File: $service_file"
-    echo "  Working Dir:  $working_dir"
-    echo "  User:         $user"
-    echo "  Command:      $(echo "$exec_start" | head -c 80)..."
-    echo
-    
-    # Check service status
-    echo -e "${YELLOW}Service Status:${NC}"
-    local status=$(systemctl is-active "$service_name")
-    local enabled=$(systemctl is-enabled "$service_name" 2>/dev/null || echo "disabled")
-    echo "  Status:       $status"
-    echo "  Boot Enabled: $enabled"
-    
-    # Check for recent failures
-    local failures=$(systemctl show "$service_name" --property=NRestarts --value)
-    if [[ "$failures" -gt 0 ]]; then
-        echo -e "  ${RED}Restarts:     $failures (may indicate crashes)${NC}"
-    fi
-    echo
-    
-    # Check port availability
-    if [[ -n "$working_dir" ]]; then
-        echo -e "${YELLOW}Port Check:${NC}"
-        # Try to find port from .env or config
-        local port=""
-        if [[ -f "$working_dir/.env" ]]; then
-            port=$(grep "^PORT=" "$working_dir/.env" | cut -d'=' -f2)
-        fi
-        if [[ -f "$working_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
-            port=$(jq -r '.port // ""' "$working_dir/.bunctl.json" 2>/dev/null)
-        fi
-        
-        if [[ -n "$port" ]]; then
-            if netstat -tuln 2>/dev/null | grep -q ":$port "; then
-                local pid=$(lsof -ti :$port 2>/dev/null || echo "unknown")
-                if [[ "$status" == "active" ]]; then
-                    echo -e "  Port $port:   ${GREEN}In use by PID $pid (expected)${NC}"
-                else
-                    echo -e "  Port $port:   ${RED}In use by PID $pid (conflict!)${NC}"
-                fi
-            else
-                if [[ "$status" == "active" ]]; then
-                    echo -e "  Port $port:   ${YELLOW}Not listening (service may be starting)${NC}"
-                else
-                    echo -e "  Port $port:   ${GREEN}Available${NC}"
-                fi
-            fi
-        else
-            echo "  Port:         Not configured"
-        fi
-        echo
-    fi
-    
-    # Check file permissions
-    echo -e "${YELLOW}File Permissions:${NC}"
-    if [[ -d "$working_dir" ]]; then
-        local dir_owner=$(stat -c '%U' "$working_dir" 2>/dev/null || echo "unknown")
-        local dir_perms=$(stat -c '%a' "$working_dir" 2>/dev/null || echo "unknown")
-        echo "  Directory:    $dir_owner ($dir_perms)"
-        
-        if [[ "$dir_owner" != "$user" ]] && [[ "$user" != "root" ]]; then
-            echo -e "  ${YELLOW}Warning: Directory owned by $dir_owner but service runs as $user${NC}"
-        fi
-    fi
-    
-    # Check log files
-    echo
-    echo -e "${YELLOW}Log Files:${NC}"
-    if [[ -f "$working_dir/logs/app.log" ]]; then
-        local log_size=$(du -h "$working_dir/logs/app.log" 2>/dev/null | cut -f1)
-        echo "  app.log:      $log_size"
-    else
-        echo "  app.log:      Not found"
-    fi
-    
-    if [[ -f "$working_dir/logs/error.log" ]]; then
-        local error_size=$(du -h "$working_dir/logs/error.log" 2>/dev/null | cut -f1)
-        local error_lines=$(wc -l < "$working_dir/logs/error.log" 2>/dev/null || echo "0")
-        if [[ "$error_lines" -gt 0 ]]; then
-            echo -e "  error.log:    ${RED}$error_size ($error_lines errors)${NC}"
-        else
-            echo "  error.log:    $error_size (empty)"
-        fi
-    fi
-    
-    # Show recent errors if any
-    if [[ "$status" == "failed" ]] || [[ "$failures" -gt 0 ]]; then
-        echo
-        echo -e "${RED}Recent Errors:${NC}"
-        sudo journalctl -u "$service_name" -p err -n 10 --no-pager
-    fi
-    
-    # Recommendations
-    echo
-    echo -e "${YELLOW}Recommendations:${NC}"
-    if [[ "$status" == "failed" ]]; then
-        echo "  • Check logs with: bunctl logs $app_name"
-        echo "  • Try restarting: bunctl restart $app_name"
-    fi
-    if [[ "$failures" -gt 3 ]]; then
-        echo "  • Service is crash-looping. Check application code and dependencies"
-    fi
-    if [[ "$enabled" != "enabled" ]]; then
-        echo "  • Enable auto-start: sudo systemctl enable $service_name"
-    fi
-}
-
-# Health check for an app
-health_check() {
-    local app_name="$1"
-    local service_name=$(get_service_name "$app_name")
-    
-    if ! systemctl list-units --all --no-legend | grep -q "$service_name"; then
-        log_error "App not found: $app_name"
-        exit 1
-    fi
-    
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}Health Report: $app_name${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
-    local status=$(systemctl is-active "$service_name")
-    local enabled=$(systemctl is-enabled "$service_name" 2>/dev/null || echo "disabled")
-    local pid=$(systemctl show "$service_name" --property=MainPID --value)
-    local active_time=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value)
-    local restarts=$(systemctl show "$service_name" --property=NRestarts --value)
-    local memory=$(systemctl show "$service_name" --property=MemoryCurrent --value)
-    
-    # Status indicator
-    if [[ "$status" == "active" ]]; then
-        echo -e "Status:       ${GREEN}🟢 Healthy${NC}"
-    elif [[ "$status" == "failed" ]]; then
-        echo -e "Status:       ${RED}🔴 Failed${NC}"
-    else
-        echo -e "Status:       ${YELLOW}🟡 Inactive${NC}"
-    fi
-    
-    echo -e "Boot startup: $([ "$enabled" = "enabled" ] && echo "${GREEN}✅ Enabled${NC}" || echo "${YELLOW}⚠️  Disabled${NC}")"
-    
-    if [[ "$pid" != "0" ]] && [[ -n "$pid" ]]; then
-        echo -e "PID:          $pid"
-        
-        # Calculate uptime if active
-        if [[ -n "$active_time" ]] && [[ "$active_time" != "n/a" ]]; then
-            local uptime_seconds=$(( $(date +%s) - $(date -d "$active_time" +%s) ))
-            local days=$((uptime_seconds / 86400))
-            local hours=$(( (uptime_seconds % 86400) / 3600 ))
-            local minutes=$(( (uptime_seconds % 3600) / 60 ))
-            echo -e "Uptime:       ${days}d ${hours}h ${minutes}m"
-        fi
-        
-        # Memory usage (using ps for more accurate reading)
-        local mem_kb=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || echo "0")
-        if [[ -n "$mem_kb" ]] && [[ "$mem_kb" != "0" ]]; then
-            local formatted_mem=$(format_memory "$mem_kb")
-            echo -e "Memory:       $formatted_mem"
-        fi
-    fi
-    
-    echo -e "Restarts:     $restarts"
-    
-    # Show recent logs if failed
-    if [[ "$status" == "failed" ]]; then
-        echo
-        echo -e "${RED}Recent error logs:${NC}"
-        sudo journalctl -u "$service_name" -n 5 --no-pager
-    fi
-}
-
-# Backup service configurations
-backup_services() {
-    local backup_name="${1:-backup}"
-    local backup_dir="$CONFIG_DIR/backups/${backup_name}_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$backup_dir"
-    
-    log_info "Creating backup in: $backup_dir"
-    
-    # Backup service files
-    local count=0
-    local services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-    if [[ -n "$services" ]]; then
-        while IFS= read -r service; do
-            if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                local service_file="$SYSTEMD_DIR/$service"
-                if [[ -f "$service_file" ]]; then
-                    sudo cp "$service_file" "$backup_dir/" 2>/dev/null || true
-                    count=$((count + 1))
-                fi
-            fi
-        done <<< "$services"
-    fi
-    
-    # Backup database
-    cp "$DB_FILE" "$backup_dir/" 2>/dev/null || true
-    
-    # Create backup metadata
-    cat > "$backup_dir/metadata.json" << EOF
-{
-    "version": "$VERSION",
-    "date": "$(date -Iseconds)",
-    "services": $count,
-    "user": "$(whoami)",
-    "hostname": "$(hostname)"
-}
-EOF
-    
-    log_success "Backup created: $count services backed up"
-    echo "Backup location: $backup_dir"
-}
-
-# Restore from backup
-restore_services() {
-    local backup_path="$1"
-    
-    if [[ ! -d "$backup_path" ]]; then
-        # Try to find in default backup directory
-        backup_path="$CONFIG_DIR/backups/$backup_path"
-        if [[ ! -d "$backup_path" ]]; then
-            log_error "Backup not found: $1"
-            log_info "Available backups:"
-            ls -la "$CONFIG_DIR/backups/" 2>/dev/null | grep "^d" | awk '{print "  - " $NF}'
-            exit 1
-        fi
-    fi
-    
-    log_warn "This will restore services from: $backup_path"
-    read -p "Continue? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 0
-    fi
-    
-    # Restore service files
-    local count=0
-    for service_file in "$backup_path"/*.service; do
-        if [[ -f "$service_file" ]]; then
-            sudo cp "$service_file" "$SYSTEMD_DIR/" 2>/dev/null || true
-            count=$((count + 1))
-        fi
-    done
-    
-    # Restore database
-    if [[ -f "$backup_path/apps.db" ]]; then
-        cp "$backup_path/apps.db" "$DB_FILE"
-    fi
-    
-    # Reload systemd
-    sudo systemctl daemon-reload
-    
-    log_success "Restored $count services from backup"
-}
-
-# Create systemd service for boot startup
-install_boot_service() {
-    local boot_service_file="$SYSTEMD_DIR/bunctl-autostart.service"
-    
-    log_info "Installing boot autostart service..."
-    
-    sudo tee "$boot_service_file" > /dev/null << EOF
-[Unit]
-Description=Bunctl - Start all Bun applications on boot
-After=network.target multi-user.target
+Description=Bunctl app instance (%i)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/bunctl start-all
-RemainAfterExit=yes
-StandardOutput=journal
-StandardError=journal
-User=root
+Type=simple
+# We allow both system and user env locations; missing files are ignored with '-'
+EnvironmentFile=-/etc/bunctl/%i.env
+EnvironmentFile=-%h/.config/bunctl/env/%i.env
 
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    sudo systemctl daemon-reload
-    sudo systemctl enable bunctl-autostart.service
-    
-    log_success "Boot autostart service installed and enabled"
-    log_info "All enabled apps will start automatically on system boot"
-}
+# Default user/group can be overridden in a drop-in
+User=%u
+Group=%U
 
-# Remove boot service
-uninstall_boot_service() {
-    log_info "Removing boot autostart service..."
-    
-    sudo systemctl disable bunctl-autostart.service 2>/dev/null || true
-    sudo rm -f "$SYSTEMD_DIR/bunctl-autostart.service"
-    sudo systemctl daemon-reload
-    
-    log_success "Boot autostart service removed"
-}
+# ExecStart uses a small shell to support $CMD composed from env file.
+# $CMD should be a full command line, e.g. "/usr/bin/bun run src/server.ts"
+ExecStart=/bin/sh -lc 'exec $CMD'
+ExecReload=/bin/kill -USR1 $MAINPID
 
-# Group operations
-restart_group() {
-    local pattern="$1"
-    
-    if [[ -z "$pattern" ]]; then
-        log_error "Pattern required. Example: bunctl restart-group 'api-*'"
-        exit 1
-    fi
-    
-    log_info "Restarting apps matching pattern: $pattern"
-    
-    local count=0
-    for service in $(systemctl list-units --all --no-legend "${SERVICE_PREFIX}-${pattern}" | awk '{print $1}'); do
-        local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-        sudo systemctl restart "$service"
-        log_success "Restarted: $app_name"
-        count=$((count + 1))
-    done
-    
-    if [[ $count -eq 0 ]]; then
-        log_warn "No apps found matching pattern: $pattern"
-    else
-        log_success "Restarted $count apps"
-    fi
-}
-
-# JSON output for status
-show_status_json() {
-    echo '{"apps":['
-    
-    local first=true
-    local services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-    if [[ -n "$services" ]]; then
-        while IFS= read -r service; do
-            if [[ -z "$service" ]] || [[ ! "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                continue
-            fi
-        local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-        local status=$(systemctl is-active "$service")
-        local enabled=$(systemctl is-enabled "$service" 2>/dev/null || echo "disabled")
-        local pid=$(systemctl show "$service" --property=MainPID --value)
-        local memory=$(systemctl show "$service" --property=MemoryCurrent --value)
-        local restarts=$(systemctl show "$service" --property=NRestarts --value)
-        
-        if [[ "$first" != true ]]; then
-            echo ","
-        fi
-        first=false
-        
-        # Clean up memory value
-        if [[ "$memory" == "[not set]" ]] || [[ "$memory" == "18446744073709551615" ]]; then
-            memory="0"
-        fi
-        
-        printf '    {"name":"%s","status":"%s","enabled":"%s","pid":%s,"memory":%s,"restarts":%s}' \
-            "$app_name" "$status" "$enabled" "$pid" "$memory" "$restarts"
-        done <<< "$services"
-    fi
-    
-    echo
-    echo ']}'
-}
-
-# Start an app
-start_app() {
-    local app_name="$1"
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
-    
-    # Get working directory for log rotation
-    if [[ -f "$service_file" ]]; then
-        local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
-        
-        # Rotate logs asynchronously before starting
-        rotate_logs_async "$working_dir"
-    fi
-
-    sudo systemctl start "$service_name"
-    sudo systemctl enable "$service_name" 2>/dev/null
-
-    if systemctl is-active --quiet "$service_name"; then
-        log_success "Started: $app_name"
-    else
-        log_error "Failed to start: $app_name"
-        exit 1
-    fi
-}
-
-# Stop an app
-stop_app() {
-    local app_name="$1"
-    local service_name=$(get_service_name "$app_name")
-
-    sudo systemctl stop "$service_name"
-    log_success "Stopped: $app_name"
-}
-
-# Reload an app without stopping it
-reload_app() {
-    local app_name="$1"
-    local service_name=$(get_service_name "$app_name")
-    
-    # Reload systemd daemon first to pick up any config changes
-    sudo systemctl daemon-reload
-    
-    # Send reload signal to the app
-    sudo systemctl reload "$service_name" 2>/dev/null || sudo systemctl restart "$service_name"
-    log_success "Reloaded: $app_name"
-}
-
-# Restart an app with proper sequencing
-restart_app() {
-    local app_name="$1"
-    local grace_period="${2:-2}"  # Default 2 second grace period
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
-    
-    log_debug "Restarting service: $service_name"
-    
-    # Reload systemd daemon first to pick up any file changes
-    log_debug "Reloading systemd daemon..."
-    sudo systemctl daemon-reload
-    
-    # Get working directory for log rotation
-    if [[ -f "$service_file" ]]; then
-        local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
-        log_debug "Working directory: $working_dir"
-        
-        # Rotate logs asynchronously to avoid blocking
-        rotate_logs_async "$working_dir" &
-    fi
-
-    # Stop the service first
-    log_debug "Stopping service..."
-    local stop_start=$(date +%s)
-    sudo systemctl stop "$service_name"
-    
-    # Wait for service to fully stop
-    local max_wait=10
-    local waited=0
-    while [[ $(systemctl is-active "$service_name") != "inactive" ]] && [[ $waited -lt $max_wait ]]; do
-        log_debug "Waiting for service to stop... (${waited}s)"
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    
-    local stop_end=$(date +%s)
-    log_debug "Service stopped in $((stop_end - stop_start))s"
-    
-    # Add grace period to ensure ports are released
-    log_debug "Grace period: ${grace_period}s"
-    sleep "$grace_period"
-    
-    # Start the service
-    log_debug "Starting service..."
-    local start_begin=$(date +%s)
-    sudo systemctl start "$service_name"
-    
-    # Verify it started successfully
-    if systemctl is-active --quiet "$service_name"; then
-        local start_end=$(date +%s)
-        log_debug "Service started in $((start_end - start_begin))s"
-        log_success "Restarted: $app_name"
-    else
-        log_error "Failed to restart: $app_name"
-        log_debug "Showing last 10 journal entries:"
-        sudo journalctl -u "$service_name" -n 10 --no-pager
-        exit 1
-    fi
-}
-
-# Delete an app
-delete_app() {
-    local app_name="$1"
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
-
-    # Stop and disable service
-    sudo systemctl stop "$service_name" 2>/dev/null || true
-    sudo systemctl disable "$service_name" 2>/dev/null || true
-
-    # Remove service file
-    sudo rm -f "$service_file"
-
-    # Remove from database
-    grep -v "^$app_name|" "$DB_FILE" > "$DB_FILE.tmp" || true
-    mv "$DB_FILE.tmp" "$DB_FILE"
-
-    # Reload systemd
-    sudo systemctl daemon-reload
-
-    log_success "Deleted: $app_name"
-}
-
-# Show status of all apps
-show_status() {
-    # Check for JSON output
-    if [[ "${2:-}" == "--json" ]]; then
-        show_status_json
-        return
-    fi
-    
-    echo
-    echo -e "${BLUE}━━━ Bun Applications Status ━━━${NC}"
-    echo
-    
-    local has_apps=false
-    # Get services more carefully
-    local services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-    
-    if [[ -z "$services" ]]; then
-        echo -e "  ${YELLOW}No applications found${NC}"
-        echo
-        return
-    fi
-    
-    while IFS= read -r service; do
-        # Skip if service is empty or invalid
-        if [[ -z "$service" ]] || [[ ! "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-            continue
-        fi
-        has_apps=true
-        local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-        local status=$(systemctl is-active "$service")
-        local enabled=$(systemctl is-enabled "$service" 2>/dev/null || echo "disabled")
-        local pid="-"
-        local memory="-"
-        local cpu="-"
-
-        # Status icon and text
-        local status_display
-        if [[ "$status" == "active" ]]; then
-            status_display="${GREEN}● RUNNING${NC}"
-            pid=$(systemctl show "$service" --property=MainPID --value)
-            if [[ "$pid" != "0" ]] && [[ -n "$pid" ]]; then
-                local mem_kb=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || echo "0")
-                memory=$(format_memory "$mem_kb")
-                cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | awk '{printf "%.1f%%", $1}' || echo "-")
-            else
-                pid="-"
-            fi
-        elif [[ "$status" == "failed" ]]; then
-            status_display="${RED}✖ FAILED${NC}"
-        else
-            status_display="${YELLOW}○ STOPPED${NC}"
-        fi
-        
-        # Boot status
-        local boot_status=""
-        if [[ "$enabled" == "enabled" ]]; then
-            boot_status="${GREEN}[boot]${NC}"
-        fi
-        
-        # Display app info
-        echo -e "  ${CYAN}$app_name${NC} $boot_status"
-        echo -e "    Status:  $status_display"
-        if [[ "$pid" != "-" ]]; then
-            echo -e "    PID:     $pid"
-            echo -e "    Memory:  $memory"
-            echo -e "    CPU:     $cpu"
-        fi
-        echo
-    done <<< "$services"
-    
-    if [[ "$has_apps" == false ]]; then
-        echo -e "  ${YELLOW}No applications found${NC}"
-        echo
-    fi
-}
-
-# Show logs for an app or all apps
-show_logs() {
-    # Parse arguments
-    local app_name=""
-    local lines="100"  # Default to 100 lines like pm2
-    local follow_mode=false
-    
-    # Parse all arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -f|--follow)
-                follow_mode=true
-                shift
-                ;;
-            -n|--lines)
-                if [[ -n "$2" ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
-                    lines="$2"
-                    shift 2
-                else
-                    log_error "Invalid line count after -n"
-                    exit 1
-                fi
-                ;;
-            -*)
-                log_error "Unknown option: $1"
-                log_info "Usage: bunctl logs [app-name] [-n lines] [-f]"
-                exit 1
-                ;;
-            *)
-                if [[ -z "$app_name" ]]; then
-                    app_name="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
-    
-    # If app_name is specified, show logs for that app
-    if [[ -n "$app_name" ]]; then
-        show_single_app_logs "$app_name" "$lines" "$follow_mode"
-    else
-        # Show logs for all apps
-        show_all_apps_logs "$lines" "$follow_mode"
-    fi
-}
-
-# Show logs for a single app
-show_single_app_logs() {
-    local app_name="$1"
-    local lines="$2"
-    local follow_mode="$3"
-    
-    # Get app info from database or service file
-    local service_name=$(get_service_name "$app_name")
-    local service_file="$SYSTEMD_DIR/$service_name.service"
-    
-    if [[ ! -f "$service_file" ]]; then
-        log_error "Service not found: $app_name"
-        exit 1
-    fi
-    
-    # Get working directory from service file
-    local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
-    local app_log="$working_dir/logs/app.log"
-    local error_log="$working_dir/logs/error.log"
-    
-    # Check if log files exist
-    if [[ ! -f "$app_log" ]] && [[ ! -f "$error_log" ]]; then
-        log_warn "No log files found for $app_name"
-        log_info "Log files expected at:"
-        log_info "  - $app_log"
-        log_info "  - $error_log"
-        return
-    fi
-    
-    if [[ "$follow_mode" == true ]]; then
-        # Follow both log files
-        log_info "Following logs for $app_name (Ctrl+C to stop)..."
-        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        
-        # Use tail to follow with app name prefix
-        if [[ -f "$app_log" ]]; then
-            tail -f -n "$lines" "$app_log" | sed "s/^/${CYAN}[$app_name]${NC} /" &
-        fi
-        if [[ -f "$error_log" ]] && [[ -s "$error_log" ]]; then
-            tail -f -n "$lines" "$error_log" | sed "s/^/${RED}[$app_name:ERROR]${NC} /" &
-        fi
-        wait
-    else
-        # Show recent logs from both files
-        echo -e "${CYAN}━━━ Logs for $app_name ━━━${NC}"
-        
-        if [[ -f "$app_log" ]]; then
-            echo -e "${GREEN}[APP LOG]${NC}"
-            tail -n "$lines" "$app_log"
-            echo
-        fi
-        
-        if [[ -f "$error_log" ]] && [[ -s "$error_log" ]]; then
-            echo -e "${RED}[ERROR LOG]${NC}"
-            tail -n "$lines" "$error_log"
-            echo
-        fi
-        
-        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    fi
-}
-
-# Show logs for all apps
-show_all_apps_logs() {
-    local lines="$1"
-    local follow_mode="$2"
-    
-    # Get all service files
-    local services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-    
-    if [[ -z "$services" ]]; then
-        log_warn "No applications found"
-        return
-    fi
-    
-    # Collect all log files
-    local log_files=()
-    local app_names=()
-    
-    while IFS= read -r service; do
-        if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-            local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-            local service_file="$SYSTEMD_DIR/${SERVICE_PREFIX}-${app_name}.service"
-            
-            if [[ -f "$service_file" ]]; then
-                local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
-                local app_log="$working_dir/logs/app.log"
-                
-                if [[ -f "$app_log" ]]; then
-                    log_files+=("$app_log")
-                    app_names+=("$app_name")
-                fi
-            fi
-        fi
-    done <<< "$services"
-    
-    if [[ ${#log_files[@]} -eq 0 ]]; then
-        log_warn "No log files found for any application"
-        return
-    fi
-    
-    if [[ "$follow_mode" == true ]]; then
-        log_info "Following logs for all applications (Ctrl+C to stop)..."
-        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        
-        # Start tail for each log file with app name prefix
-        for i in "${!log_files[@]}"; do
-            local log_file="${log_files[$i]}"
-            local app="${app_names[$i]}"
-            tail -f -n "$lines" "$log_file" | while IFS= read -r line; do
-                echo -e "${CYAN}[$app]${NC} $line"
-            done &
-        done
-        
-        # Wait for all background processes
-        wait
-    else
-        echo -e "${CYAN}━━━ All Applications Logs (last $lines lines) ━━━${NC}"
-        echo
-        
-        # Create a temporary file for merged logs
-        local temp_file=$(mktemp)
-        
-        # Collect logs from all apps with app name prefix
-        for i in "${!log_files[@]}"; do
-            local log_file="${log_files[$i]}"
-            local app="${app_names[$i]}"
-            
-            # Get more lines from each file to ensure we have enough after merging
-            # (get N lines from each app, then we'll filter to N total after sorting)
-            tail -n "$lines" "$log_file" 2>/dev/null | while IFS= read -r line; do
-                # Extract timestamp if present
-                if [[ "$line" =~ ^\[([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2})\] ]]; then
-                    echo "${BASH_REMATCH[1]} ${CYAN}[$app]${NC} $line"
-                elif [[ "$line" =~ ^=====.*([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
-                    # Handle service start/stop markers
-                    echo "${BASH_REMATCH[1]} ${CYAN}[$app]${NC} $line"
-                else
-                    # For lines without timestamps, use a placeholder that sorts early
-                    echo "1970-01-01 00:00:00 ${CYAN}[$app]${NC} $line"
-                fi
-            done >> "$temp_file"
-        done
-        
-        # Sort by timestamp and display
-        sort "$temp_file" | tail -n "$lines" | while IFS= read -r line; do
-            # Remove the temporary timestamp used for sorting
-            echo -e "${line:20}"
-        done
-        
-        rm -f "$temp_file"
-        
-        echo
-        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    fi
-}
-
-# List all apps
-list_apps() {
-    # Check for JSON output
-    if [[ "${2:-}" == "--json" ]]; then
-        show_status_json
-        return
-    fi
-    
-    echo
-    echo -e "${BLUE}━━━ Registered Applications ━━━${NC}"
-    echo
-
-    local count=0
-    # Get services more carefully
-    local services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-    
-    if [[ -z "$services" ]]; then
-        echo -e "  ${YELLOW}No applications found${NC}"
-        echo
-        return
-    fi
-    
-    while IFS= read -r service; do
-        # Skip if service is empty or invalid
-        if [[ -z "$service" ]] || [[ ! "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-            continue
-        fi
-        local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-        local status=$(systemctl is-active "$service")
-        local enabled=$(systemctl is-enabled "$service" 2>/dev/null || echo "disabled")
-        local app_info=$(grep "^$app_name|" "$DB_FILE" 2>/dev/null | head -1)
-        local app_dir=$(echo "$app_info" | cut -d'|' -f2)
-
-        # Status indicator
-        local status_icon
-        if [[ "$status" == "active" ]]; then
-            status_icon="${GREEN}●${NC}"
-        elif [[ "$status" == "failed" ]]; then
-            status_icon="${RED}✖${NC}"
-        else
-            status_icon="${YELLOW}○${NC}"
-        fi
-        
-        # Boot indicator
-        local boot_marker=""
-        if [[ "$enabled" == "enabled" ]]; then
-            boot_marker=" ${GREEN}[boot]${NC}"
-        fi
-
-        echo -e "  $status_icon ${CYAN}$app_name${NC}$boot_marker"
-        if [[ -n "$app_dir" ]]; then
-            echo -e "    ${BLUE}→${NC} $app_dir"
-        fi
-        
-        count=$((count + 1))
-    done <<< "$services"
-
-    if [[ $count -eq 0 ]]; then
-        echo -e "  ${YELLOW}No applications found${NC}"
-    fi
-    echo
-}
-
-# Scan and import existing directories
-scan_import() {
-    log_info "Scanning $SITES_DIR for Bun applications..."
-
-    local found=0
-    for site_dir in "$SITES_DIR"/*; do
-        if [[ ! -d "$site_dir" ]]; then
-            continue
-        fi
-
-        # Auto-detect entry file
-        cd "$site_dir"
-        local entry_file=$(auto_detect_entry "$site_dir")
-        
-        if [[ -f "$site_dir/$entry_file" ]]; then
-            local app_name=$(get_app_name "$site_dir")
-            log_info "Found: $site_dir (entry: $entry_file)"
-            read -p "Import this app? (y/N): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                init_app "$app_name" "$entry_file"
-                ((found++))
-            fi
-        fi
-    done
-
-    log_success "Scan complete. Imported $found applications."
-}
-
-# Show help
-show_help() {
-    echo -e "${BLUE}bunctl${NC} - Bun Application Manager for systemd ${CYAN}v$VERSION${NC}"
-    echo
-    echo -e "${YELLOW}Usage:${NC}"
-    echo "  bunctl <command> [options]"
-    echo
-    echo -e "${YELLOW}Recommended Workflow:${NC}"
-    echo -e "  ${GREEN}generate-config${NC}         Create .bunctl.json config file (RECOMMENDED)"
-    echo -e "  ${GREEN}init${NC}                    Initialize service from config file"
-    echo
-    echo -e "${YELLOW}Core Commands:${NC}"
-    echo -e "  ${GREEN}init${NC} [name] [entry]     Create service (uses config if present)"
-    echo -e "  ${GREEN}start${NC} <name>            Start an application"
-    echo -e "  ${GREEN}stop${NC} <name>             Stop an application"
-    echo -e "  ${GREEN}restart${NC} <name>          Restart an application"
-    echo -e "  ${GREEN}delete${NC} <name>           Remove an application"
-    echo -e "  ${GREEN}status${NC} [--json]         Show status of all applications"
-    echo -e "  ${GREEN}list${NC} [--json]           List all applications"
-    echo -e "  ${GREEN}logs${NC} [name] [-n N] [-f] Show logs (all apps if no name)"
-    echo -e "  ${GREEN}flush${NC} [name]            Clear logs (all if no name)"
-    echo
-    echo -e "${YELLOW}Advanced Commands:${NC}"
-    echo -e "  ${GREEN}update${NC}                  Update all services (fix paths, etc.)"
-    echo -e "  ${GREEN}health${NC} <name>           Show detailed health report"
-    echo -e "  ${GREEN}env${NC} <name> KEY=val      Set environment variable"
-    echo -e "  ${GREEN}backup${NC} [name]           Backup all service configurations"
-    echo -e "  ${GREEN}restore${NC} <backup>        Restore from backup"
-    echo -e "  ${GREEN}scan${NC}                    Scan and import apps from $SITES_DIR"
-    echo
-    echo -e "${YELLOW}Boot Management:${NC}"
-    echo -e "  ${GREEN}install-boot${NC}            Enable auto-start on system boot"
-    echo -e "  ${GREEN}uninstall-boot${NC}          Disable auto-start on system boot"
-    echo
-    echo -e "${YELLOW}Bulk Operations:${NC}"
-    echo -e "  ${GREEN}start-all${NC}               Start all applications"
-    echo -e "  ${GREEN}stop-all${NC}                Stop all applications"
-    echo -e "  ${GREEN}restart-all${NC}             Restart all applications"
-    echo -e "  ${GREEN}restart-group${NC} <pattern> Restart apps matching pattern"
-    echo
-    echo -e "${YELLOW}Examples:${NC}"
-    echo
-    echo "  ${CYAN}# Recommended approach using config file:${NC}"
-    echo "  cd /var/www/sites/myapp"
-    echo "  bunctl generate-config     # Creates .bunctl.json"
-    echo "  # Edit .bunctl.json to customize settings"
-    echo "  bunctl init               # Reads config and creates service"
-    echo
-    echo "  ${CYAN}# Quick setup without config:${NC}"
-    echo "  bunctl init myapp src/server.ts"
-    echo "  bunctl health myapp"
-    echo "  bunctl env myapp PORT=3000"
-    echo "  bunctl restart-group 'api-*'"
-    echo "  bunctl status --json | jq '.apps[]'"
-    echo
-    echo "  ${CYAN}# Logs examples:${NC}"
-    echo "  bunctl logs                # Show last 100 lines from ALL apps"
-    echo "  bunctl logs -n 200         # Show last 200 lines from ALL apps"
-    echo "  bunctl logs -f             # Follow ALL apps logs in real-time"
-    echo "  bunctl logs myapp          # Show last 100 lines from myapp"
-    echo "  bunctl logs myapp -n 50    # Show last 50 lines from myapp"
-    echo "  bunctl logs myapp -f       # Follow myapp logs in real-time"
-    echo "  bunctl logs -f -n 500      # Follow all logs, start with 500 lines"
-    echo
-    echo -e "${YELLOW}Configuration File (.bunctl.json):${NC}"
-    echo "  The config file is the ${GREEN}recommended approach${NC} for managing apps."
-    echo
-    echo -e "  ${CYAN}Full config example:${NC}"
-    echo -e "  ${CYAN}{"
-    echo -e "    \"name\": \"my-api\",           ${CYAN}// App name${NC}"
-    echo -e "    \"entry\": \"src/server.ts\",   ${CYAN}// Entry point${NC}"
-    echo -e "    \"port\": 3000,               ${CYAN}// Port number${NC}"
-    echo -e "    \"runtime\": \"bun\",           ${CYAN}// Runtime: 'bun' or 'node'${NC}"
-    echo -e "    \"memory\": \"1G\",             ${CYAN}// Memory limit${NC}"
-    echo -e "    \"cpu\": 75,                  ${CYAN}// CPU quota %${NC}"
-    echo -e "    \"autostart\": true,          ${CYAN}// Start on boot${NC}"
-    echo -e "    \"restart_delay\": 10,        ${CYAN}// Seconds before restart${NC}"
-    echo -e "    \"max_restarts\": 3,          ${CYAN}// Max restart attempts${NC}"
-    echo -e "    \"env\": {                    ${CYAN}// Environment variables${NC}"
-    echo -e "      \"NODE_ENV\": \"production\""
-    echo -e "    }"
-    echo -e "  }${NC}"
-    echo
-}
-
-# Generate config file template
-generate_config() {
-    local config_file=".bunctl.json"
-    local force="${1:-}"
-    
-    # Check if config already exists
-    if [[ -f "$config_file" ]] && [[ "$force" != "--force" ]]; then
-        log_warn "Config file already exists: $config_file"
-        log_info "Use 'bunctl generate-config --force' to overwrite"
-        exit 1
-    fi
-    
-    # Auto-detect current setup
-    local detected_entry=$(auto_detect_entry "$(pwd)")
-    local suggested_name=$(basename "$(pwd)")
-    
-    log_info "Generating .bunctl.json configuration file..."
-    
-    cat > "$config_file" << EOF
-{
-  "name": "$suggested_name",
-  "entry": "$detected_entry",
-  "port": 3000,
-  "runtime": "bun",
-  "memory": "512M",
-  "cpu": 50,
-  "autostart": true,
-  "restart_delay": 10,
-  "max_restarts": 3,
-  "env": {
-    "NODE_ENV": "production"
-  }
-}
-EOF
-    
-    log_success "Created $config_file"
-    log_info "Configuration file generated with detected settings:"
-    echo -e "${CYAN}  • Name:${NC} $suggested_name"
-    echo -e "${CYAN}  • Entry:${NC} $detected_entry"
-    echo
-    log_info "Edit the file to customize your settings, then run:"
-    echo -e "${GREEN}  bunctl init${NC}"
-    echo
-    log_info "The config file is the recommended way to configure your app!"
-}
-
-# Update all services (refresh service files)
-update_services() {
-    log_info "Regenerating all service files with current configuration..."
-    
-    # Find Bun executable
-    local bun_path=""
-    # Try which first as it's most reliable
-    if command -v bun &> /dev/null; then
-        bun_path=$(which bun)
-    else
-        # Check common locations if which doesn't work
-        for path in /usr/local/bin/bun /usr/bin/bun $HOME/.bun/bin/bun /home/*/.bun/bin/bun; do
-            if [[ -x "$path" ]]; then
-                bun_path="$path"
-                break
-            fi
-        done
-    fi
-    
-    if [[ -z "$bun_path" ]]; then
-        log_error "Bun executable not found!"
-        exit 1
-    fi
-    
-    log_info "Using Bun at: $bun_path"
-    
-    local count=0
-    # Look for service files directly in the systemd directory
-    for service_file in "$SYSTEMD_DIR"/${SERVICE_PREFIX}-*.service; do
-        if [[ -f "$service_file" ]]; then
-            local service_name=$(basename "$service_file" .service)
-            local app_name=$(echo "$service_name" | sed "s/${SERVICE_PREFIX}-//")
-            log_info "Updating service: $service_name"
-            
-            # Extract current configuration from service file
-            local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
-            local user=$(grep "^User=" "$service_file" | sed 's/^User=//')
-            local current_exec=$(grep "^ExecStart=" "$service_file" || echo "")
-            local entry_file=$(echo "$current_exec" | sed 's/^ExecStart=.*bun run //' | sed 's/^ExecStart=.*bun //' | sed "s|$working_dir/||" | sed 's|^/||')
-            
-            # Load config if exists
-            local memory_limit="512M"
-            local cpu_quota="50"
-            local restart_delay="10"
-            local max_restarts="3"
-            local runtime="bun"
-            
-            if [[ -f "$working_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
-                memory_limit=$(jq -r '.memory // "512M"' "$working_dir/.bunctl.json" 2>/dev/null || echo "512M")
-                cpu_quota=$(jq -r '.cpu // "50"' "$working_dir/.bunctl.json" 2>/dev/null || echo "50")
-                restart_delay=$(jq -r '.restart_delay // "10"' "$working_dir/.bunctl.json" 2>/dev/null || echo "10")
-                max_restarts=$(jq -r '.max_restarts // "3"' "$working_dir/.bunctl.json" 2>/dev/null || echo "3")
-                runtime=$(jq -r '.runtime // "bun"' "$working_dir/.bunctl.json" 2>/dev/null || echo "bun")
-            fi
-            
-            # Determine runtime flags
-            local runtime_flag=""
-            if [[ "$runtime" == "bun" ]]; then
-                runtime_flag="--bun"
-            fi
-            
-            # Determine logging mode
-            local log_mode="${BUNCTL_LOG_MODE:-journal}"
-            if [[ -f "$working_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
-                log_mode=$(jq -r '.log_mode // "journal"' "$working_dir/.bunctl.json" 2>/dev/null || echo "journal")
-            fi
-            
-            # Regenerate entire service file
-            if [[ "$log_mode" == "journal" ]]; then
-                # Use systemd journal for non-blocking logging
-                sudo tee "$service_file" > /dev/null << EOF
-[Unit]
-Description=Bun App - $app_name
-After=network.target
+# Restart policy & delays
+Restart=always
+RestartSec=10s
 StartLimitIntervalSec=60
 StartLimitBurst=3
-
-[Service]
-Type=simple
-User=$user
-Group=www-data
-WorkingDirectory=$working_dir
-ExecStart=$bun_path $runtime_flag $working_dir/$entry_file
-ExecReload=/bin/kill -USR1 \$MAINPID
-Restart=always
-RestartSec=$restart_delay
-StartLimitBurst=$max_restarts
-SyslogIdentifier=$app_name
+TimeoutStopSec=15s
+KillSignal=SIGTERM
+SendSIGKILL=yes
+KillMode=process
+SyslogIdentifier=bunctl[%i]
 StandardOutput=journal
 StandardError=journal
-Environment="NODE_ENV=production"
-Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
-EOF
-            else
-                # Legacy file-based logging
-                sudo tee "$service_file" > /dev/null << EOF
-[Unit]
-Description=Bun App - $app_name
-After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
-[Service]
-Type=simple
-User=$user
-Group=www-data
-WorkingDirectory=$working_dir
-ExecStartPre=/bin/sh -c 'echo "\\n===== Service started at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====" >> $working_dir/logs/app.log'
-ExecStart=/bin/sh -c '$bun_path $runtime_flag $working_dir/$entry_file 2>&1 | while IFS= read -r line; do echo "[\$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\")] \$line"; done >> $working_dir/logs/app.log 2>> $working_dir/logs/error.log'
-ExecReload=/bin/kill -USR1 \$MAINPID
-ExecStopPost=/bin/sh -c 'echo "===== Service stopped at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====\\n" >> $working_dir/logs/app.log'
-Restart=always
-RestartSec=$restart_delay
-StartLimitBurst=$max_restarts
-SyslogIdentifier=$app_name
-Environment="NODE_ENV=production"
-Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
-EOF
-            fi
-
-            # Add environment file if it exists
-            if [[ -f "$working_dir/config/.env" ]]; then
-                echo "EnvironmentFile=$working_dir/config/.env" | sudo tee -a "$service_file" > /dev/null
-            elif [[ -f "$working_dir/.env" ]]; then
-                echo "EnvironmentFile=$working_dir/.env" | sudo tee -a "$service_file" > /dev/null
-            fi
-            
-            # Add config environment variables if exists
-            if [[ -f "$working_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
-                local env_vars=$(jq -r '.env // {} | to_entries[] | "Environment=\"\(.key)=\(.value)\""' "$working_dir/.bunctl.json" 2>/dev/null)
-                if [[ -n "$env_vars" ]]; then
-                    echo "$env_vars" | sudo tee -a "$service_file" > /dev/null
-                fi
-                
-                local port=$(jq -r '.port // ""' "$working_dir/.bunctl.json" 2>/dev/null)
-                if [[ -n "$port" ]] && [[ "$port" != "null" ]]; then
-                    echo "Environment=\"PORT=$port\"" | sudo tee -a "$service_file" > /dev/null
-                fi
-            fi
-
-            # Add resource limits and security
-            sudo tee -a "$service_file" > /dev/null << EOF
-
-# Resource limits
-MemoryMax=$memory_limit
-CPUQuota=${cpu_quota}%
-TasksMax=100
-
-# Security
-NoNewPrivileges=true
-PrivateTmp=true
+# Reasonable defaults; instance drop-in can override
+TasksMax=256
+NoNewPrivileges=yes
+PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=$working_dir
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
+UNIT
+  sc daemon-reload
+}
+
+# ----------------------------
+# Read / write env & drop-ins
+# ----------------------------
+kv_set() {
+  # idempotent KEY=VALUE in a file
+  local file="$1" key="$2" val="$3"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  if grep -q -E "^${key}=" "$file"; then
+    sed -i -E "s|^${key}=.*$|${key}=${val}|g" "$file"
+  else
+    printf "%s=%s\n" "$key" "$val" >>"$file"
+  fi
+}
+
+kv_unset() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 0
+  sed -i -E "/^${key}=.*/d" "$file"
+}
+
+write_instance_dropin() {
+  local name="$1" workdir="$2" memory="$3" cpu="$4" user_override="$5" group_override="$6"
+  local d="$(instance_dropin_dir "$name")"
+  mkdir -p "$d"
+  local f="$(instance_dropin "$name")"
+  cat >"$f" <<EOF
+[Service]
+WorkingDirectory=$workdir
+$( [[ -n "$user_override" ]] && echo "User=$user_override" )
+$( [[ -n "$group_override" ]] && echo "Group=$group_override" )
+$( [[ -n "$memory" ]] && echo "MemoryMax=$memory" )
+$( [[ -n "$cpu" ]] && echo "CPUQuota=$cpu%" )
 EOF
-            
-            count=$((count + 1))
-            log_success "Regenerated: $service_name"
-        fi
+}
+
+# ----------------------------
+# App discovery helpers
+# ----------------------------
+list_instances() {
+  # print instance names without suffix
+  sc list-units --all --no-legend "${UNIT_PREFIX}*.service" \
+    | awk '{print $1}' | sed -E "s/^${UNIT_PREFIX}//; s/\.service$//" | sort -u
+}
+
+have_instance() {
+  local name="$1"
+  sc list-unit-files --no-legend | awk '{print $1}' | grep -q "^$(instance_unit_name "$name")$"
+}
+
+# ----------------------------
+# Commands
+# ----------------------------
+cmd_init() {
+  # bunctl init --name NAME [--entry FILE] [--port N] [--cwd DIR] [--memory 512M] [--cpu 50] [--user UNITUSER] [--group UNITGROUP] [--autostart] [--runtime bun|node]
+  local name="" entry="" port="" cwd="" memory="512M" cpu="50" runtime="bun" autostart=false unit_user="" unit_group=""
+  # parse flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="${2:-}"; shift 2;;
+      --entry) entry="${2:-}"; shift 2;;
+      --port) port="${2:-}"; shift 2;;
+      --cwd) cwd="${2:-}"; shift 2;;
+      --memory) memory="${2:-}"; shift 2;;
+      --cpu) cpu="${2:-}"; shift 2;;
+      --runtime) runtime="${2:-}"; shift 2;;
+      --autostart) autostart=true; shift;;
+      --user) unit_user="${2:-}"; shift 2;;
+      --group) unit_group="${2:-}"; shift 2;;
+      --system) MODE="system"; shift;;
+      --user-unit|--user) MODE="user"; shift;;
+      *) [[ -z "$name" ]] && name="$1" || { warn "Unknown arg: $1"; }; shift;;
+    esac
+  done
+
+  [[ -z "${name:-}" ]] && name="$(basename "$(pwd)")"
+  name="$(sanitize_name "$name")"
+
+  [[ -z "$cwd" ]] && cwd="$(pwd)"
+  [[ -z "$entry" ]] && {
+    # auto-detect common entry files
+    local try=( "src/server.ts" "src/index.ts" "src/app.ts" "server.ts" "index.ts" "app.ts" "src/server.js" "server.js" "index.js" )
+    for f in "${try[@]}"; do
+      [[ -f "$cwd/$f" ]] && entry="$f" && break
     done
-    
-    # Reload systemd
-    sudo systemctl daemon-reload
-    
-    if [[ $count -eq 0 ]]; then
-        log_warn "No services found to update"
-        log_info "Make sure you have initialized apps with 'bunctl init'"
-    else
-        log_success "Updated $count services"
-        log_info "Restart services for changes to take effect: bunctl restart-all"
-    fi
-}
+  }
+  [[ -z "$entry" ]] && die "Could not auto-detect entry file. Pass --entry FILE."
 
-# Flush logs for apps
-flush_logs() {
-    local app_name="$1"
-    
-    if [[ -z "$app_name" ]]; then
-        log_info "Flushing logs for all applications..."
-        
-        # Clear systemd journal for all bun services
-        services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-        if [[ -n "$services" ]]; then
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo journalctl --rotate --vacuum-time=1s -u "$service" 2>/dev/null || true
-                    local app=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-                    log_success "Flushed logs: $app"
-                fi
-            done <<< "$services"
-        fi
-        
-        # Also clear log files if they exist
-        for dir in "$SITES_DIR"/*/logs; do
-            if [[ -d "$dir" ]]; then
-                sudo truncate -s 0 "$dir"/*.log 2>/dev/null || true
-            fi
-        done
-    else
-        local service_name=$(get_service_name "$app_name")
-        
-        # Clear systemd journal for specific service
-        sudo journalctl --rotate --vacuum-time=1s -u "$service_name" 2>/dev/null || true
-        
-        # Clear log files if they exist
-        local app_info=$(grep "^$app_name|" "$DB_FILE" 2>/dev/null | head -1)
-        local app_dir=$(echo "$app_info" | cut -d'|' -f2)
-        if [[ -n "$app_dir" ]] && [[ -d "$app_dir/logs" ]]; then
-            sudo truncate -s 0 "$app_dir/logs"/*.log 2>/dev/null || true
-        fi
-        
-        log_success "Flushed logs for: $app_name"
-    fi
-}
+  local bun="$(bun_path)"
 
-# Install shell completion
-install_completion() {
-    local completion_file="/etc/bash_completion.d/bunctl"
-    
-    log_info "Installing shell completion..."
-    
-    sudo tee "$completion_file" > /dev/null << 'EOF'
-# Bash completion for bunctl
-_bunctl() {
-    local cur="${COMP_WORDS[COMP_CWORD]}"
-    local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    
-    local commands="init generate-config start stop restart delete status list logs flush update health env backup restore scan install-boot uninstall-boot start-all stop-all restart-all restart-group help"
-    
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "${commands}" -- ${cur}))
-    elif [[ ${COMP_CWORD} -eq 2 ]]; then
-        case "${prev}" in
-            start|stop|restart|delete|logs|health|env)
-                # Get app names
-                local apps=$(bunctl list 2>/dev/null | grep -E "^  [🟢🔴🟡]" | sed 's/^  [🟢🔴🟡] //' | cut -d' ' -f1)
-                COMPREPLY=($(compgen -W "${apps}" -- ${cur}))
-                ;;
-            status|list)
-                COMPREPLY=($(compgen -W "--json" -- ${cur}))
-                ;;
-        esac
-    fi
-}
-complete -F _bunctl bunctl
+  ensure_dirs
+  write_unit_template
+
+  local env_file="$(env_file_path "$name")"
+  # Compose CMD
+  local cmd=""
+  if [[ "$runtime" == "bun" ]]; then
+    cmd="$bun run $entry"
+  else
+    require_cmd node
+    cmd="$(command -v node) $entry"
+  fi
+  kv_set "$env_file" "CMD" "$cmd"
+  kv_set "$env_file" "PORT" "${port:-}"
+  kv_set "$env_file" "NODE_ENV" "production"
+
+  write_instance_dropin "$name" "$cwd" "$memory" "$cpu" "$unit_user" "$unit_group"
+
+  # Persist a small json (optional)
+  mkdir -p "$APPS_DIR"
+  cat >"$(config_path "$name")" <<EOF
+{"name":"$name","entry":"$entry","port":"${port:-}","cwd":"$cwd","memory":"$memory","cpu":"$cpu","runtime":"$runtime","mode":"$MODE","version":"$VERSION"}
 EOF
-    
-    log_success "Shell completion installed"
-    log_info "Reload your shell or run: source /etc/bash_completion.d/bunctl"
+
+  sc daemon-reload
+  if $autostart; then sc enable "$(instance_unit_name "$name")"; fi
+  ok "Initialized app '${name}'"
+  echo "• Working dir: $cwd"
+  echo "• Entry:       $entry"
+  echo "• Runtime:     $runtime"
+  echo "• Env file:    $env_file"
+  echo "• Unit:        $(unit_template_path) + $(instance_dropin "$name")"
+  echo "Start it: bunctl start ${name}"
 }
 
-# Main command handler
-case "${1:-}" in
-    init)
-        # Smart argument detection for init command
-        if [[ -n "$2" ]] && [[ "$2" == *"/"* || "$2" == *".ts" || "$2" == *".js" ]]; then
-            # First argument looks like a file path, treat it as entry file
-            init_app "" "$2" "$3"
-        else
-            # Traditional usage: name, entry, port
-            init_app "$2" "$3" "$4"
-        fi
-        ;;
-    start)
-        if [[ -z "$2" ]]; then
-            log_error "App name required"
-            exit 1
-        fi
-        start_app "$2"
-        ;;
-    stop)
-        if [[ -z "$2" ]]; then
-            log_error "App name required"
-            exit 1
-        fi
-        stop_app "$2"
-        ;;
-    restart)
-        if [[ -z "$2" ]]; then
-            log_error "App name required"
-            exit 1
-        fi
-        restart_app "$2"
-        ;;
-    delete|rm)
-        if [[ -z "$2" ]]; then
-            log_error "App name required"
-            exit 1
-        fi
-        delete_app "$2"
-        ;;
-    status|ps)
-        show_status "$@"
-        ;;
-    list|ls)
-        list_apps "$@"
-        ;;
-    logs|log)
-        # Pass all arguments to show_logs for proper parsing
-        shift  # Remove 'logs' from arguments
-        show_logs "$@"
-        ;;
-    diagnose)
-        if [[ -z "$2" ]]; then
-            log_error "App name required"
-            exit 1
-        fi
-        diagnose_app "$2"
-        ;;
-    health)
-        if [[ -z "$2" ]]; then
-            log_error "App name required"
-            exit 1
-        fi
-        health_check "$2"
-        ;;
-    env)
-        if [[ -z "$2" ]] || [[ -z "$3" ]]; then
-            log_error "Usage: bunctl env <app> KEY=value"
-            exit 1
-        fi
-        set_env "$2" "$3"
-        ;;
-    backup)
-        backup_services "$2"
-        ;;
-    restore)
-        if [[ -z "$2" ]]; then
-            log_error "Backup name or path required"
-            exit 1
-        fi
-        restore_services "$2"
-        ;;
-    generate-config)
-        generate_config "$2"
-        ;;
-    update)
-        update_services
-        ;;
-    flush)
-        flush_logs "$2"
-        ;;
-    scan|import)
-        scan_import
-        ;;
-    install-boot)
-        install_boot_service
-        ;;
-    uninstall-boot)
-        uninstall_boot_service
-        ;;
-    install-completion)
-        install_completion
-        ;;
+cmd_start()    { local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl start <name>"; sc start "$(instance_unit_name "$name")"; ok "Started ${name}"; }
+cmd_stop()     { local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl stop <name>"; sc stop  "$(instance_unit_name "$name")"; ok "Stopped ${name}"; }
+cmd_restart()  { local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl restart <name>"; sc restart "$(instance_unit_name "$name")"; ok "Restarted ${name}"; }
+cmd_reload()   { local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl reload <name>"; sc reload "$(instance_unit_name "$name")" || { warn "Service did not handle reload; performing restart"; sc restart "$(instance_unit_name "$name")"; }; ok "Reloaded ${name}"; }
+cmd_enable()   { local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl enable <name>"; sc enable "$(instance_unit_name "$name")"; ok "Enabled ${name} on boot"; }
+cmd_disable()  { local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl disable <name>"; sc disable "$(instance_unit_name "$name")"; ok "Disabled ${name} on boot"; }
+
+cmd_delete() {
+  local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl delete <name>"
+  local unit="$(instance_unit_name "$name")"
+  sc stop "$unit" >/dev/null 2>&1 || true
+  sc disable "$unit" >/dev/null 2>&1 || true
+  rm -f -- "$(instance_dropin "$name")"
+  rmdir --ignore-fail-on-non-empty "$(instance_dropin_dir "$name")" 2>/dev/null || true
+  local envf="$(env_file_path "$name")"
+  [[ -f "$envf" ]] && rm -f -- "$envf"
+  sc daemon-reload
+  ok "Deleted configuration for ${name}"
+}
+
+cmd_status() {
+  # bunctl status [--json] [name]
+  local json=false target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=true; shift;;
+      *) target="$1"; shift;;
+    esac
+  done
+
+  if [[ -n "$target" ]]; then
+    local unit="$(instance_unit_name "$(sanitize_name "$target")")"
+    if $json; then
+      # Produce one JSON object
+      local s="$(sc show "$unit" --no-page --property=Id,ActiveState,MainPID,MemoryCurrent,CPUUsageNSec,NRestarts,ExecMainStatus 2>/dev/null || true)"
+      [[ -z "$s" ]] && echo '{}' && return 0
+      # shellcheck disable=SC2001
+      echo '{' \
+        "\"name\":\"$target\"," \
+        "\"unit\":\"$unit\"," \
+        "\"status\":\"$(echo "$s" | sed -n 's/^ActiveState=//p')\"," \
+        "\"pid\":$(echo "$s" | sed -n 's/^MainPID=//p')," \
+        "\"memory_bytes\":$(echo "$s" | sed -n 's/^MemoryCurrent=//p' | sed 's/[^0-9].*//')," \
+        "\"restarts\":$(echo "$s" | sed -n 's/^NRestarts=//p')," \
+        "\"exit_code\":$(echo "$s" | sed -n 's/^ExecMainStatus=//p')" \
+      '}'
+    else
+      echo
+      echo "${BOLD}Bun app: ${target}${RESET}"
+      sc status "$unit" --no-pager || true
+      echo
+    fi
+    return
+  fi
+
+  # All instances
+  if $json; then
+    echo '{"apps":['
+    local first=true
+    while read -r name; do
+      [[ -z "$name" ]] && continue
+      $first || echo ','
+      first=false
+      # inline JSON for each unit
+      local unit="$(instance_unit_name "$name")"
+      local s="$(sc show "$unit" --no-page --property=Id,ActiveState,MainPID,MemoryCurrent,CPUUsageNSec,NRestarts,ExecMainStatus 2>/dev/null || true)"
+      if [[ -n "$s" ]]; then
+        echo -n '{'
+        echo -n "\"name\":\"$name\","
+        echo -n "\"unit\":\"$unit\","
+        echo -n "\"status\":\"$(echo "$s" | sed -n 's/^ActiveState=//p')\","
+        echo -n "\"pid\":$(echo "$s" | sed -n 's/^MainPID=//p'),"
+        echo -n "\"memory_bytes\":$(echo "$s" | sed -n 's/^MemoryCurrent=//p' | sed 's/[^0-9].*//'),"
+        echo -n "\"restarts\":$(echo "$s" | sed -n 's/^NRestarts=//p'),"
+        echo -n "\"exit_code\":$(echo "$s" | sed -n 's/^ExecMainStatus=//p')"
+        echo -n '}'
+      fi
+    done < <(list_instances)
+    echo ']}'
+    return
+  fi
+
+  echo
+  echo "${BOLD}━━━ Bun Applications Status ━━━${RESET}"
+  echo
+  local any=false
+  while read -r name; do
+    [[ -z "$name" ]] && continue
+    any=true
+    local unit="$(instance_unit_name "$name")"
+    local active="$(sc is-active "$unit" 2>/dev/null || true)"
+    local enabled="$(sc is-enabled "$unit" 2>/dev/null || echo disabled)"
+    local pid="$(sc show "$unit" --property=MainPID --value 2>/dev/null || echo 0)"
+    local mem="$(sc show "$unit" --property=MemoryCurrent --value 2>/dev/null || echo 0)"
+    # humanize mem (kB based)
+    local mem_h="-"
+    if [[ "$mem" =~ ^[0-9]+$ ]] && [[ "$mem" -gt 0 ]]; then
+      if (( mem < 1024 )); then mem_h="${mem}B"
+      elif (( mem < 1048576 )); then mem_h="$((mem/1024)) KB"
+      elif (( mem < 1073741824 )); then mem_h="$(awk "BEGIN{printf \"%.1f MB\", $mem/1048576}")"
+      else mem_h="$(awk "BEGIN{printf \"%.1f GB\", $mem/1073741824}")"
+      fi
+    fi
+    local status_text
+    if [[ "$active" == "active" ]]; then
+      status_text="${GREEN}● RUNNING${RESET}"
+    elif [[ "$active" == "failed" ]]; then
+      status_text="${RED}✖ FAILED${RESET}"
+    else
+      status_text="${YELLOW}○ STOPPED${RESET}"
+    fi
+    printf "  %s\n" "${CYAN}${name}${RESET} ${enabled:+[$enabled]}"
+    printf "    Status:  %b\n" "$status_text"
+    [[ "$pid" != "0" ]] && printf "    PID:     %s\n" "$pid"
+    [[ "$mem_h" != "-" ]] && printf "    Memory:  %s\n" "$mem_h"
+    echo
+  done < <(list_instances)
+  $any || { echo "  ${YELLOW}No applications found${RESET}"; echo; }
+}
+
+cmd_logs() {
+  # bunctl logs [name] [-f] [-n N]
+  local name="" follow=false lines=100
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--follow) follow=true; shift;;
+      -n) lines="${2:-100}"; shift 2;;
+      *) name="$1"; shift;;
+    esac
+  done
+  if [[ -n "$name" ]]; then
+    local unit="$(instance_unit_name "$(sanitize_name "$name")")"
+    if $follow; then jc -u "$unit" -e -n "$lines" -f; else jc -u "$unit" -e -n "$lines"; fi
+  else
+    # all bunctl units
+    if $follow; then jc -u "${UNIT_PREFIX}*" -e -n "$lines" -f; else jc -u "${UNIT_PREFIX}*" -e -n "$lines"; fi
+  fi
+}
+
+cmd_env() {
+  # bunctl env <name> set KEY=VAL | unset KEY
+  local name="$(sanitize_name "${1:-}")"; shift || true
+  [[ -z "$name" ]] && die "Usage: bunctl env <name> set KEY=VAL | unset KEY"
+  local sub="${1:-}"; shift || true
+  local envf="$(env_file_path "$name")"
+  case "$sub" in
+    set)
+      local kv="${1:-}"; [[ "$kv" =~ ^[A-Za-z_][A-Za-z0-9_]*=.+$ ]] || die "Use KEY=value"
+      local key="${kv%%=*}" val="${kv#*=}"
+      kv_set "$envf" "$key" "$val"
+      ok "Set ${key} for ${name} in ${envf}"
+      warn "Restart to apply: bunctl restart $name"
+      ;;
+    unset)
+      local key="${1:-}"; [[ -z "$key" ]] && die "Provide key to unset"
+      kv_unset "$envf" "$key"
+      ok "Unset ${key} for ${name}"
+      warn "Restart to apply: bunctl restart $name"
+      ;;
+    *) die "Unknown env action. Use: bunctl env <name> set KEY=VAL | unset KEY";;
+  }
+}
+
+cmd_health() {
+  local name="$(sanitize_name "${1:-}")"; [[ -z "$name" ]] && die "Usage: bunctl health <name>"
+  local unit="$(instance_unit_name "$name")"
+  echo "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+  echo "${CYAN}Health Report: ${name}${RESET}"
+  echo "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+  local active="$(sc is-active "$unit" 2>/dev/null || echo unknown)"
+  local enabled="$(sc is-enabled "$unit" 2>/dev/null || echo disabled)"
+  local pid="$(sc show "$unit" --property=MainPID --value 2>/dev/null || echo 0)"
+  local restarts="$(sc show "$unit" --property=NRestarts --value 2>/dev/null || echo 0)"
+  echo "Status:       $active"
+  echo "Boot startup: $enabled"
+  [[ "$pid" != "0" ]] && echo "PID:          $pid"
+  if [[ "$pid" != "0" ]]; then
+    local mem_kb="$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || echo 0)"
+    if [[ "$mem_kb" -gt 0 ]]; then
+      if (( mem_kb < 1024 )); then echo "Memory:       ${mem_kb} KB"
+      elif (( mem_kb < 1048576 )); then echo "Memory:       $(awk "BEGIN{printf \"%.1f MB\", $mem_kb/1024}")"
+      else echo "Memory:       $(awk "BEGIN{printf \"%.1f GB\", $mem_kb/1048576}")"; fi
+    fi
+  fi
+  echo "Restarts:     $restarts"
+  if [[ "$active" == "failed" ]]; then
+    echo; echo "${RED}Recent error logs:${RESET}"
+    jc -u "$unit" -n 20 --no-pager || true
+  fi
+}
+
+cmd_restart_all() {
+  local parallel=false wait_health=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --parallel) parallel=true; shift;;
+      --wait) wait_health=true; shift;;
+      *) shift;;
+    esac
+  done
+  local names=( $(list_instances) )
+  [[ ${#names[@]} -eq 0 ]] && { warn "No apps"; return 0; }
+  info "Restarting ${#names[@]} apps"
+  if $parallel; then
+    for n in "${names[@]}"; do sc restart "$(instance_unit_name "$n")" & done
+    wait
+  else
+    for n in "${names[@]}"; do sc restart "$(instance_unit_name "$n")"; done
+  fi
+  if $wait_health; then
+    for n in "${names[@]}"; do
+      sc is-active --quiet "$(instance_unit_name "$n")" || die "App failed: $n"
+    done
+  fi
+  ok "Restarted ${#names[@]} apps"
+}
+
+cmd_restart_group() {
+  local pattern="${1:-}"; [[ -z "$pattern" ]] && die "Usage: bunctl restart-group '<glob>'"
+  local names=( )
+  while read -r n; do [[ "$n" == $pattern ]] && names+=( "$n" ); done < <(list_instances)
+  [[ ${#names[@]} -eq 0 ]] && { warn "No apps match: $pattern"; return 0; }
+  info "Restarting: ${names[*]}"
+  for n in "${names[@]}"; do sc restart "$(instance_unit_name "$n")"; done
+  ok "Done"
+}
+
+cmd_update() {
+  # Regenerate drop-ins from configs (when you changed .json manually)
+  local names=( )
+  if [[ $# -gt 0 ]]; then names=( "$@" ); else mapfile -t names < <(list_instances); fi
+  [[ ${#names[@]} -eq 0 ]] && { warn "No apps"; return 0; }
+  for n in "${names[@]}"; do
+    local cfg="$(config_path "$n")"
+    if [[ -f "$cfg" ]]; then
+      local cwd="$(jq -r '.cwd // ""' "$cfg" 2>/dev/null || echo "")"
+      local memory="$(jq -r '.memory // ""' "$cfg" 2>/dev/null || echo "")"
+      local cpu="$(jq -r '.cpu // ""' "$cfg" 2>/dev/null || echo "")"
+      write_instance_dropin "$n" "${cwd:-$(pwd)}" "$memory" "$cpu" "" ""
+    else
+      warn "No config for $n, skipping"
+    fi
+  done
+  sc daemon-reload
+  ok "Updated ${#names[@]} app(s)"
+}
+
+cmd_list() { list_instances; }
+
+cmd_logs_all() { cmd_logs -f; }
+
+cmd_version() { echo "bunctl version $VERSION"; }
+
+cmd_install_completion() {
+  local dst="/etc/bash_completion.d/bunctl"
+  is_root || die "Run as root to install bash completion"
+  cat >"$dst" <<'COMP'
+_bunctl_complete() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  local cmds="init start stop restart reload delete enable disable status logs env health restart-all restart-group update list version"
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
+    return 0
+  fi
+  case "${COMP_WORDS[1]}" in
+    start|stop|restart|reload|delete|enable|disable|status|logs|env|health)
+      local names="$(systemctl list-units --all --no-legend 'bunctl@*.service' 2>/dev/null | awk '{print $1}' | sed -E 's/^bunctl@//; s/\.service$//' )"
+      COMPREPLY=( $(compgen -W "$names" -- "$cur") )
+      ;;
     restart-group)
-        if [[ -z "$2" ]]; then
-            log_error "Pattern required"
-            exit 1
-        fi
-        restart_group "$2"
-        ;;
-    reload)
-        sudo systemctl daemon-reload
-        log_success "Systemd daemon reloaded"
-        ;;
-    start-all)
-        services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-        if [[ -z "$services" ]]; then
-            log_warn "No applications found to start"
-        else
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl start "$service" 2>/dev/null || true
-                    log_success "Started: $(echo $service | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')"
-                fi
-            done <<< "$services"
-        fi
-        ;;
-    stop-all)
-        services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-        if [[ -z "$services" ]]; then
-            log_warn "No applications found to stop"
-        else
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl stop "$service" 2>/dev/null || true
-                    log_success "Stopped: $(echo $service | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')"
-                fi
-            done <<< "$services"
-        fi
-        ;;
-    restart-all)
-        # Check for --parallel flag
-        local parallel_mode=false
-        local wait_ready=false
-        for arg in "$@"; do
-            if [[ "$arg" == "--parallel" ]]; then
-                parallel_mode=true
-            elif [[ "$arg" == "--wait" ]]; then
-                wait_ready=true
-            fi
-        done
-        
-        services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
-        if [[ -z "$services" ]]; then
-            log_warn "No applications found to restart"
-        elif [[ "$parallel_mode" == true ]]; then
-            # Parallel restart mode
-            log_info "Restarting all services in parallel..."
-            
-            # Stop all services in parallel
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl stop "$service" 2>/dev/null &
-                fi
-            done <<< "$services"
-            
-            # Wait for all stop commands to complete
-            wait
-            
-            # Grace period
-            sleep 2
-            
-            # Start all services in parallel
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl start "$service" 2>/dev/null &
-                fi
-            done <<< "$services"
-            
-            # Wait for all start commands to complete
-            wait
-            
-            # Optionally wait for services to be ready
-            if [[ "$wait_ready" == true ]]; then
-                log_info "Waiting for services to be ready..."
-                sleep 3
-                while IFS= read -r service; do
-                    if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                        local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
-                        if systemctl is-active --quiet "$service"; then
-                            log_success "Ready: $app_name"
-                        else
-                            log_error "Failed: $app_name"
-                        fi
-                    fi
-                done <<< "$services"
-            else
-                log_success "All services restarted in parallel"
-            fi
-        else
-            # Sequential restart mode (default)
-            # First stop all services
-            log_info "Stopping all services..."
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl stop "$service" 2>/dev/null || true
-                fi
-            done <<< "$services"
-            
-            # Wait for all to stop with grace period
-            sleep 2
-            
-            # Then start all services
-            log_info "Starting all services..."
-            while IFS= read -r service; do
-                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
-                    sudo systemctl start "$service" 2>/dev/null || true
-                    log_success "Restarted: $(echo $service | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')"
-                fi
-            done <<< "$services"
-        fi
-        ;;
-    version|--version|-v)
-        echo "bunctl version $VERSION"
-        ;;
-    help|--help|-h|"")
-        show_help
-        ;;
-    *)
-        log_error "Unknown command: $1"
-        show_help
-        exit 1
-        ;;
-esac
+      COMPREPLY=()
+      ;;
+  esac
+}
+complete -F _bunctl_complete bunctl
+COMP
+  ok "Installed completion to $dst"
+}
+
+usage() {
+cat <<USAGE
+${BOLD}bunctl${RESET} — systemd-based PM2 replacement for Bun
+
+${BOLD}Usage:${RESET}
+  bunctl [--user|--system] <command> [args]
+
+${BOLD}Common commands:${RESET}
+  init [--name NAME] [--entry FILE] [--port N] [--cwd DIR] [--memory 512M] [--cpu 50] [--runtime bun|node] [--autostart]
+  start <name>            stop <name>           restart <name>         reload <name>
+  enable <name>           disable <name>        delete <name>
+  status [--json] [name]  logs [name] [-f] [-n N]   env <name> (set KEY=VAL|unset KEY)
+  health <name>           list                  restart-all [--parallel] [--wait]
+  restart-group '<glob>'  update [name ...]
+  version                 install-completion
+
+${BOLD}Environment:${RESET}
+  BUNCTL_MODE=user|system|auto   Default: auto (user units when not root)
+
+Docs: README.md
+USAGE
+}
+
+# ----------------------------
+# entrypoint
+# ----------------------------
+main() {
+  require_cmd systemctl
+  case "${1:-}" in
+    --user|--system) [[ "${1}" == "--user" ]] && MODE="user" || MODE="system"; shift;;
+  esac
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    init) cmd_init "$@";;
+    start) cmd_start "$@";;
+    stop) cmd_stop "$@";;
+    restart) cmd_restart "$@";;
+    reload) cmd_reload "$@";;
+    delete) cmd_delete "$@";;
+    enable) cmd_enable "$@";;
+    disable) cmd_disable "$@";;
+    status) cmd_status "$@";;
+    logs) cmd_logs "$@";;
+    env) cmd_env "$@";;
+    health) cmd_health "$@";;
+    restart-all) cmd_restart_all "$@";;
+    restart-group) cmd_restart_group "$@";;
+    update) cmd_update "$@";;
+    list) cmd_list "$@";;
+    version|--version|-v) cmd_version;;
+    install-completion) cmd_install_completion;;
+    ""|-h|--help|help) usage;;
+    *) usage; exit 1;;
+  esac
+}
+
+main "$@"
