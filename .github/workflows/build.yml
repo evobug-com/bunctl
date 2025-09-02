@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, v3-rewrite ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, v3-rewrite ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -61,19 +61,19 @@ jobs:
           targets: ${{ matrix.platform.target }}
 
       - name: Cache cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo index
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo build
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
@@ -85,24 +85,20 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build
-        run: |
-          cd bunctl-rs
-          cargo build --release --target ${{ matrix.platform.target }}
+        run: cargo build --release --target ${{ matrix.platform.target }}
 
       - name: Package (Windows)
         if: matrix.platform.os == 'windows-latest'
         run: |
-          cd bunctl-rs
-          7z a ../${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+          7z a ${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
 
       - name: Package (Unix)
         if: matrix.platform.os != 'windows-latest'
         run: |
-          cd bunctl-rs
-          tar czf ../${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }}
+          tar czf ${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.name }}
           path: ${{ matrix.platform.name }}

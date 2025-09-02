@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, v3-rewrite ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, v3-rewrite ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,26 +34,22 @@ jobs:
           toolchain: ${{ matrix.rust }}
 
       - name: Cache cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo index
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: |
-          cd bunctl-rs
-          cargo test --workspace --all-features
+        run: cargo test --workspace --all-features
 
       - name: Run tests (release mode)
-        run: |
-          cd bunctl-rs
-          cargo test --workspace --all-features --release
+        run: cargo test --workspace --all-features --release
 
   fmt:
     name: Format
@@ -68,9 +64,7 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        run: |
-          cd bunctl-rs
-          cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
 
   clippy:
     name: Clippy
@@ -85,21 +79,19 @@ jobs:
           components: clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo index
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: |
-          cd bunctl-rs
-          cargo clippy --workspace --all-features -- -D warnings
+        run: cargo clippy --workspace --all-features -- -D warnings
 
   coverage:
     name: Code Coverage
@@ -115,14 +107,12 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Generate coverage
-        run: |
-          cd bunctl-rs
-          cargo tarpaulin --workspace --all-features --out Xml
+        run: cargo tarpaulin --workspace --all-features --out Xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
-          files: ./bunctl-rs/cobertura.xml
+          files: ./cobertura.xml
           fail_ci_if_error: false
 
   minimal-versions:
@@ -137,6 +127,5 @@ jobs:
 
       - name: Check with minimal versions
         run: |
-          cd bunctl-rs
           cargo +nightly update -Z minimal-versions
           cargo build --workspace --all-features
