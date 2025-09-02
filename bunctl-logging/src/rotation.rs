@@ -137,12 +137,12 @@ impl LogRotation {
             let path = entry.path();
             if let Some(name) = path.file_name() {
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with(&*base_name) && name_str != base_name {
-                    if let Ok(metadata) = entry.metadata().await {
-                        if let Ok(modified) = metadata.modified() {
-                            log_files.push((path, modified));
-                        }
-                    }
+                if name_str.starts_with(&*base_name)
+                    && name_str != base_name
+                    && let Ok(metadata) = entry.metadata().await
+                    && let Ok(modified) = metadata.modified()
+                {
+                    log_files.push((path, modified));
                 }
             }
         }

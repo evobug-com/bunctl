@@ -2,7 +2,7 @@ use crate::cli::StartArgs;
 use bunctl_core::config::ConfigLoader;
 use bunctl_core::{AppConfig, AppId};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
     // If config file is specified, load from it
@@ -13,15 +13,15 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
     // If no name and no command/script, try to auto-discover config
     if args.name.is_none() && args.command.is_none() && args.script.is_none() {
         let loader = ConfigLoader::new();
-        if let Ok(config) = loader.load().await {
-            if !config.apps.is_empty() {
-                println!("Found config with {} app(s)", config.apps.len());
-                for app in config.apps {
-                    println!("Starting {}", app.name);
-                    // TODO: Actually start the app via daemon
-                }
-                return Ok(());
+        if let Ok(config) = loader.load().await
+            && !config.apps.is_empty()
+        {
+            println!("Found config with {} app(s)", config.apps.len());
+            for app in config.apps {
+                println!("Starting {}", app.name);
+                // TODO: Actually start the app via daemon
             }
+            return Ok(());
         }
     }
 
@@ -49,7 +49,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
         }
     }
 
-    let config = AppConfig {
+    let _config = AppConfig {
         name: name.clone(),
         command,
         args: Vec::new(),
@@ -73,7 +73,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn start_from_config(config_path: &PathBuf, app_name: Option<String>) -> anyhow::Result<()> {
+async fn start_from_config(config_path: &Path, app_name: Option<String>) -> anyhow::Result<()> {
     let loader = ConfigLoader::new();
     let config = loader.load_file(config_path).await?;
 

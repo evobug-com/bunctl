@@ -2,7 +2,7 @@ use crate::{IpcMessage, IpcResponse};
 use std::path::Path;
 
 pub struct IpcServer {
-    pipe_name: String,
+    _pipe_name: String,
 }
 
 impl IpcServer {
@@ -11,7 +11,9 @@ impl IpcServer {
             r"\\.\pipe\bunctl_{}",
             path.as_ref().file_name().unwrap().to_string_lossy()
         );
-        Ok(Self { pipe_name })
+        Ok(Self {
+            _pipe_name: pipe_name,
+        })
     }
 
     pub async fn accept(&self) -> bunctl_core::Result<()> {

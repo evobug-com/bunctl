@@ -20,7 +20,7 @@ pub struct LogWriterConfig {
 
 #[derive(Debug)]
 pub struct LogWriter {
-    path: PathBuf,
+    _path: PathBuf,
     file: Arc<Mutex<BufWriter<File>>>,
     rotation: Arc<Mutex<LogRotation>>,
     buffer: Arc<LineBuffer>,
@@ -52,7 +52,7 @@ impl LogWriter {
         let (tx, rx) = bounded::<LogCommand>(10000);
 
         let writer = Self {
-            path: config.path.clone(),
+            _path: config.path.clone(),
             file: Arc::new(Mutex::new(file)),
             rotation: Arc::new(Mutex::new(rotation)),
             buffer: Arc::new(buffer),

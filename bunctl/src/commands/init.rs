@@ -179,7 +179,7 @@ async fn generate_ecosystem_config(app: &AppConfig, instances: usize) -> anyhow:
         },
         watch: None,
         ignore_watch: None,
-        max_memory_restart: app.max_memory.map(|m| format_memory(m)),
+        max_memory_restart: app.max_memory.map(format_memory),
         env: Some(app.env.clone()),
         env_production: None,
         env_development: None,

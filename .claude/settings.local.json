@@ -8,7 +8,8 @@
       "Bash(cargo fix:*)",
       "Bash(RUST_BACKTRACE=1 cargo test test_auto_discovery_bunctl_json -- --nocapture)",
       "Bash(cargo run:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(cargo clippy:*)"
     ],
     "deny": [],
     "ask": []

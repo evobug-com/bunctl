@@ -54,10 +54,10 @@ impl BackoffStrategy {
     }
 
     pub fn next_delay(&mut self) -> Option<Duration> {
-        if let Some(max) = self.max_attempts {
-            if self.attempt >= max {
-                return None;
-            }
+        if let Some(max) = self.max_attempts
+            && self.attempt >= max
+        {
+            return None;
         }
 
         let base_ms = self.base_delay.as_millis() as f64;
@@ -67,7 +67,7 @@ impl BackoffStrategy {
         let jitter_range = delay_ms * self.jitter_factor;
         use rand::Rng;
         let mut rng = rand::rng();
-        let jitter = rng.gen_range(-jitter_range..=jitter_range);
+        let jitter = rng.random_range(-jitter_range..=jitter_range);
         let final_delay_ms = (delay_ms + jitter).max(0.0) as u64;
 
         self.attempt += 1;
