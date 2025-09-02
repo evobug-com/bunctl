@@ -278,10 +278,10 @@ impl ProcessSupervisor for LinuxSupervisor {
     }
 
     async fn set_resource_limits(&self, handle: &ProcessHandle, config: &AppConfig) -> Result<()> {
-        if self.use_cgroups {
-            if let Some(cgroup_path) = self.cgroups.get(&handle.app_id) {
-                self.set_cgroup_limits(&cgroup_path, config).await?;
-            }
+        if self.use_cgroups
+            && let Some(cgroup_path) = self.cgroups.get(&handle.app_id)
+        {
+            self.set_cgroup_limits(&cgroup_path, config).await?;
         }
         // When cgroups are not available, resource limits cannot be set dynamically
         Ok(())
