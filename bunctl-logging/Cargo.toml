@@ -1,0 +1,32 @@
+[package]
+name = "bunctl-logging"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bunctl-core = { path = "../bunctl-core" }
+tokio = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+once_cell = { workspace = true }
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+chrono = "0.4"
+flate2 = "1.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+nix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
