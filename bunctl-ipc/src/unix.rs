@@ -1,7 +1,7 @@
 use crate::{IpcMessage, IpcResponse};
 use std::path::Path;
-use tokio::net::{UnixListener, UnixStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{UnixListener, UnixStream};
 
 pub struct IpcServer {
     listener: UnixListener,
@@ -14,7 +14,7 @@ impl IpcServer {
         let listener = UnixListener::bind(path)?;
         Ok(Self { listener })
     }
-    
+
     pub async fn accept(&self) -> bunctl_core::Result<(UnixStream, std::net::SocketAddr)> {
         let (stream, addr) = self.listener.accept().await?;
         Ok((stream, addr.into()))
@@ -27,7 +27,7 @@ impl IpcClient {
     pub async fn connect(path: impl AsRef<Path>) -> bunctl_core::Result<UnixStream> {
         Ok(UnixStream::connect(path).await?)
     }
-    
+
     pub async fn send(stream: &mut UnixStream, msg: &IpcMessage) -> bunctl_core::Result<()> {
         let data = serde_json::to_vec(msg)?;
         stream.write_u32(data.len() as u32).await?;
@@ -35,7 +35,7 @@ impl IpcClient {
         stream.flush().await?;
         Ok(())
     }
-    
+
     pub async fn recv(stream: &mut UnixStream) -> bunctl_core::Result<IpcResponse> {
         let len = stream.read_u32().await?;
         let mut buf = vec![0u8; len as usize];

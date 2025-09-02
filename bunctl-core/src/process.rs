@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::process::{Child, Command};
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
@@ -29,7 +29,7 @@ impl ProcessHandle {
             inner: Some(std::sync::Arc::new(tokio::sync::Mutex::new(child))),
         }
     }
-    
+
     pub async fn wait(&mut self) -> crate::Result<ExitStatus> {
         if let Some(child_arc) = self.inner.as_ref() {
             let mut child = child_arc.lock().await;
@@ -39,7 +39,7 @@ impl ProcessHandle {
             Err(crate::Error::ProcessNotFound(self.app_id.to_string()))
         }
     }
-    
+
     pub async fn kill(&mut self) -> crate::Result<()> {
         if let Some(child_arc) = self.inner.as_ref() {
             let mut child = child_arc.lock().await;
@@ -59,7 +59,7 @@ impl ProcessHandle {
             }
         }
     }
-    
+
     pub async fn signal(&mut self, signal: Signal) -> crate::Result<()> {
         #[cfg(unix)]
         {
@@ -72,11 +72,14 @@ impl ProcessHandle {
         {
             match signal {
                 Signal::Terminate => self.kill().await,
-                _ => Err(crate::Error::Signal(format!("Signal {:?} not supported on Windows", signal))),
+                _ => Err(crate::Error::Signal(format!(
+                    "Signal {:?} not supported on Windows",
+                    signal
+                ))),
             }
         }
     }
-    
+
     pub fn id(&self) -> u32 {
         self.pid
     }
@@ -124,24 +127,24 @@ impl ExitStatus {
             signal: None,
         }
     }
-    
+
     #[cfg(test)]
     pub fn new(code: Option<i32>, signal: Option<i32>) -> Self {
         Self { code, signal }
     }
-    
+
     pub fn success(&self) -> bool {
         self.code == Some(0)
     }
-    
+
     pub fn code(&self) -> Option<i32> {
         self.code
     }
-    
+
     pub fn signal(&self) -> Option<i32> {
         self.signal
     }
-    
+
     pub fn should_restart(&self, policy: crate::config::RestartPolicy) -> bool {
         match policy {
             crate::config::RestartPolicy::No => false,
@@ -178,7 +181,7 @@ impl ProcessBuilder {
             stdin: Stdio::null(),
         }
     }
-    
+
     pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -187,16 +190,17 @@ impl ProcessBuilder {
         self.args = args.into_iter().map(|s| s.as_ref().to_string()).collect();
         self
     }
-    
+
     pub fn env<K, V>(mut self, key: K, value: V) -> Self
     where
         K: AsRef<str>,
         V: AsRef<str>,
     {
-        self.env.push((key.as_ref().to_string(), value.as_ref().to_string()));
+        self.env
+            .push((key.as_ref().to_string(), value.as_ref().to_string()));
         self
     }
-    
+
     pub fn envs<I, K, V>(mut self, vars: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -204,41 +208,42 @@ impl ProcessBuilder {
         V: AsRef<str>,
     {
         for (k, v) in vars {
-            self.env.push((k.as_ref().to_string(), v.as_ref().to_string()));
+            self.env
+                .push((k.as_ref().to_string(), v.as_ref().to_string()));
         }
         self
     }
-    
+
     pub fn current_dir(mut self, dir: impl AsRef<std::path::Path>) -> Self {
         self.cwd = Some(dir.as_ref().to_path_buf());
         self
     }
-    
+
     pub fn uid(mut self, uid: u32) -> Self {
         self.uid = Some(uid);
         self
     }
-    
+
     pub fn gid(mut self, gid: u32) -> Self {
         self.gid = Some(gid);
         self
     }
-    
+
     pub fn stdout(mut self, stdout: Stdio) -> Self {
         self.stdout = stdout;
         self
     }
-    
+
     pub fn stderr(mut self, stderr: Stdio) -> Self {
         self.stderr = stderr;
         self
     }
-    
+
     pub fn stdin(mut self, stdin: Stdio) -> Self {
         self.stdin = stdin;
         self
     }
-    
+
     pub async fn spawn(self) -> crate::Result<Child> {
         let mut cmd = Command::new(&self.command);
         cmd.args(&self.args)
@@ -246,15 +251,15 @@ impl ProcessBuilder {
             .stderr(self.stderr)
             .stdin(self.stdin)
             .kill_on_drop(true);
-        
+
         if let Some(cwd) = self.cwd {
             cmd.current_dir(cwd);
         }
-        
+
         for (key, value) in self.env {
             cmd.env(key, value);
         }
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -265,7 +270,7 @@ impl ProcessBuilder {
                 cmd.gid(gid);
             }
         }
-        
+
         cmd.spawn()
             .map_err(|e| crate::Error::SpawnFailed(format!("{}: {}", self.command, e)))
     }
@@ -275,80 +280,80 @@ impl ProcessBuilder {
 mod tests {
     use super::*;
     use crate::config::RestartPolicy;
-    
+
     #[test]
     fn test_exit_status_success() {
         let status = ExitStatus::new(Some(0), None);
-        
+
         assert!(status.success());
         assert_eq!(status.code(), Some(0));
         assert_eq!(status.signal(), None);
     }
-    
+
     #[test]
     fn test_exit_status_failure() {
         let status = ExitStatus::new(Some(1), None);
-        
+
         assert!(!status.success());
         assert_eq!(status.code(), Some(1));
     }
-    
+
     #[cfg(unix)]
     #[test]
     fn test_exit_status_signal() {
         let status = ExitStatus::new(None, Some(9)); // SIGKILL
-        
+
         assert!(!status.success());
         assert_eq!(status.code(), None);
         assert_eq!(status.signal(), Some(9));
     }
-    
+
     #[test]
     fn test_restart_policy_no() {
         let status_success = ExitStatus::new(Some(0), None);
         let status_failure = ExitStatus::new(Some(1), None);
-        
+
         assert!(!status_success.should_restart(RestartPolicy::No));
         assert!(!status_failure.should_restart(RestartPolicy::No));
     }
-    
+
     #[test]
     fn test_restart_policy_always() {
         let status_success = ExitStatus::new(Some(0), None);
         let status_failure = ExitStatus::new(Some(1), None);
-        
+
         assert!(status_success.should_restart(RestartPolicy::Always));
         assert!(status_failure.should_restart(RestartPolicy::Always));
     }
-    
+
     #[test]
     fn test_restart_policy_on_failure() {
         let status_success = ExitStatus::new(Some(0), None);
         let status_failure = ExitStatus::new(Some(1), None);
-        
+
         assert!(!status_success.should_restart(RestartPolicy::OnFailure));
         assert!(status_failure.should_restart(RestartPolicy::OnFailure));
     }
-    
+
     #[test]
     fn test_restart_policy_unless_stopped() {
         let status_success = ExitStatus::new(Some(0), None);
         let status_failure = ExitStatus::new(Some(1), None);
-        
+
         assert!(status_success.should_restart(RestartPolicy::UnlessStopped));
         assert!(status_failure.should_restart(RestartPolicy::UnlessStopped));
     }
-    
+
     #[test]
     fn test_process_builder_basic() {
         let builder = ProcessBuilder::new("echo")
             .args(vec!["hello", "world"])
             .current_dir("/tmp");
-        
+
         // We can't actually spawn in tests, but we can verify the builder works
         assert!(true);
     }
-    
+
     #[test]
     fn test_signal_types() {
         let signals = vec![
@@ -358,7 +363,7 @@ mod tests {
             Signal::User1,
             Signal::User2,
         ];
-        
+
         for signal in signals {
             match signal {
                 Signal::Terminate => assert!(true),

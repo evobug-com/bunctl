@@ -1,23 +1,21 @@
 mod cli;
-mod daemon;
 mod commands;
-
+mod daemon;
 
 use clap::Parser;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-    
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
-    
+
     let cli = cli::Cli::parse();
-    
+
     match cli.command {
         cli::Command::Init(args) => commands::init::execute(args).await,
         cli::Command::Start(args) => commands::start::execute(args).await,

@@ -1,4 +1,4 @@
-use bunctl_core::config::{AppConfig, Config, RestartPolicy, BackoffConfig};
+use bunctl_core::config::{AppConfig, BackoffConfig, Config, RestartPolicy};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -24,7 +24,7 @@ fn test_restart_policy_serialization() {
         RestartPolicy::OnFailure,
         RestartPolicy::UnlessStopped,
     ];
-    
+
     for policy in policies {
         let json = serde_json::to_string(&policy).unwrap();
         let deserialized: RestartPolicy = serde_json::from_str(&json).unwrap();
@@ -37,7 +37,7 @@ fn test_config_serialization() {
     let mut env = HashMap::new();
     env.insert("PORT".to_string(), "3000".to_string());
     env.insert("NODE_ENV".to_string(), "production".to_string());
-    
+
     let app = AppConfig {
         name: "test-app".to_string(),
         command: "bun run server.ts".to_string(),
@@ -66,15 +66,15 @@ fn test_config_serialization() {
             max_attempts: Some(10),
         },
     };
-    
+
     let config = Config {
         apps: vec![app],
         daemon: Default::default(),
     };
-    
+
     let json = serde_json::to_string_pretty(&config).unwrap();
     let deserialized: Config = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(config.apps.len(), deserialized.apps.len());
     assert_eq!(config.apps[0].name, deserialized.apps[0].name);
     assert_eq!(config.apps[0].command, deserialized.apps[0].command);
@@ -101,7 +101,7 @@ fn test_unix_specific_config() {
         gid: Some(1000),
         ..Default::default()
     };
-    
+
     assert_eq!(app.uid, Some(1000));
     assert_eq!(app.gid, Some(1000));
 }
@@ -112,9 +112,9 @@ fn test_empty_config() {
         apps: vec![],
         daemon: Default::default(),
     };
-    
+
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: Config = serde_json::from_str(&json).unwrap();
-    
+
     assert!(deserialized.apps.is_empty());
 }

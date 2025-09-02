@@ -9,13 +9,13 @@ pub use app::{App, AppId, AppState};
 pub use backoff::BackoffStrategy;
 pub use config::{AppConfig, Config, ConfigWatcher};
 pub use error::{Error, Result};
-pub use process::{ExitStatus, ProcessHandle, ProcessInfo, Signal, ProcessBuilder};
+pub use process::{ExitStatus, ProcessBuilder, ProcessHandle, ProcessInfo, Signal};
 pub use supervisor::{ProcessSupervisor, SupervisorEvent};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_app_id_sanitization() {
         assert_eq!(AppId::new("test-app").unwrap().as_str(), "test-app");
@@ -24,7 +24,7 @@ mod tests {
         assert_eq!(AppId::new("test@app!").unwrap().as_str(), "test-app");
         assert_eq!(AppId::new("  test  ").unwrap().as_str(), "test");
     }
-    
+
     #[test]
     fn test_app_id_validation() {
         assert!(AppId::new("valid-name").is_ok());
