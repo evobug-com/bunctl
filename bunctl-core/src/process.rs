@@ -96,7 +96,7 @@ pub enum Signal {
 
 impl Signal {
     #[cfg(unix)]
-    fn to_nix(&self) -> nix::sys::signal::Signal {
+    fn to_nix(self) -> nix::sys::signal::Signal {
         use nix::sys::signal::Signal as NixSignal;
         match self {
             Signal::Terminate => NixSignal::SIGTERM,
@@ -262,11 +262,12 @@ impl ProcessBuilder {
 
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
             if let Some(uid) = self.uid {
+                use std::os::unix::process::CommandExt;
                 cmd.uid(uid);
             }
             if let Some(gid) = self.gid {
+                use std::os::unix::process::CommandExt;
                 cmd.gid(gid);
             }
         }
