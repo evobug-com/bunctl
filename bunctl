@@ -1648,10 +1648,66 @@ case "${1:-}" in
         fi
         ;;
     restart-all)
+        # Check for --parallel flag
+        local parallel_mode=false
+        local wait_ready=false
+        for arg in "$@"; do
+            if [[ "$arg" == "--parallel" ]]; then
+                parallel_mode=true
+            elif [[ "$arg" == "--wait" ]]; then
+                wait_ready=true
+            fi
+        done
+        
         services=$(systemctl list-units --all --no-legend --no-pager --plain "${SERVICE_PREFIX}-*" 2>/dev/null | grep "^${SERVICE_PREFIX}-" | awk '{print $1}')
         if [[ -z "$services" ]]; then
             log_warn "No applications found to restart"
+        elif [[ "$parallel_mode" == true ]]; then
+            # Parallel restart mode
+            log_info "Restarting all services in parallel..."
+            
+            # Stop all services in parallel
+            while IFS= read -r service; do
+                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
+                    sudo systemctl stop "$service" 2>/dev/null &
+                fi
+            done <<< "$services"
+            
+            # Wait for all stop commands to complete
+            wait
+            
+            # Grace period
+            sleep 2
+            
+            # Start all services in parallel
+            while IFS= read -r service; do
+                if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
+                    sudo systemctl start "$service" 2>/dev/null &
+                fi
+            done <<< "$services"
+            
+            # Wait for all start commands to complete
+            wait
+            
+            # Optionally wait for services to be ready
+            if [[ "$wait_ready" == true ]]; then
+                log_info "Waiting for services to be ready..."
+                sleep 3
+                while IFS= read -r service; do
+                    if [[ -n "$service" ]] && [[ "$service" =~ ^${SERVICE_PREFIX}- ]]; then
+                        local app_name=$(echo "$service" | sed "s/${SERVICE_PREFIX}-//" | sed 's/.service//')
+                        if systemctl is-active --quiet "$service"; then
+                            log_success "Ready: $app_name"
+                        else
+                            log_error "Failed: $app_name"
+                        fi
+                    fi
+                done <<< "$services"
+            else
+                log_success "All services restarted in parallel"
+            fi
         else
+            # Sequential restart mode (default)
             # First stop all services
             log_info "Stopping all services..."
             while IFS= read -r service; do
