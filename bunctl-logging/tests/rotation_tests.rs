@@ -1,7 +1,6 @@
 use bunctl_logging::{LogRotation, RotationConfig, RotationStrategy};
 use std::fs;
 use tempfile::TempDir;
-use tokio;
 
 #[tokio::test]
 async fn test_rotation_strategy_size() {

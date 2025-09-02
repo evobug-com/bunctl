@@ -357,8 +357,8 @@ mod tests {
             .args(vec!["hello", "world"])
             .current_dir("/tmp");
 
-        // We can't actually spawn in tests, but we can verify the builder works
-        assert!(true);
+        // ProcessBuilder fields are private, so we just verify it compiles
+        // The actual functionality is tested through integration tests
     }
 
     #[test]
@@ -371,13 +371,14 @@ mod tests {
             Signal::User2,
         ];
 
+        // Verify all signal types are matchable
         for signal in signals {
             match signal {
-                Signal::Terminate => assert!(true),
-                Signal::Kill => assert!(true),
-                Signal::Reload => assert!(true),
-                Signal::User1 => assert!(true),
-                Signal::User2 => assert!(true),
+                Signal::Terminate => {}
+                Signal::Kill => {}
+                Signal::Reload => {}
+                Signal::User1 => {}
+                Signal::User2 => {}
             }
         }
     }

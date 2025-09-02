@@ -12,7 +12,8 @@
       "Bash(cargo clippy:*)",
       "Bash(rustup target list:*)",
       "Bash(rustup target add:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Read(\\/**)"
     ],
     "deny": [],
     "ask": []

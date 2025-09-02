@@ -85,7 +85,7 @@ fn test_line_buffer_max_size() {
     // Should force flush incomplete line
     let lines = buffer.get_lines();
     assert_eq!(lines.len(), 1);
-    assert!(lines[0].len() > 0);
+    assert!(!lines[0].is_empty());
 }
 
 #[test]
