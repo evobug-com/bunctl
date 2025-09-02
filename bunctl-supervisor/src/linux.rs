@@ -4,7 +4,7 @@ use bunctl_core::{
     SupervisorEvent,
 };
 use nix::sys::signal::{self, Signal};
-use nix::unistd::{Gid, Pid, Uid};
+use nix::unistd::Pid;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
