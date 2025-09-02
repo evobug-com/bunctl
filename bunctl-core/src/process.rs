@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_process_builder_basic() {
-        let builder = ProcessBuilder::new("echo")
+        let _builder = ProcessBuilder::new("echo")
             .args(vec!["hello", "world"])
             .current_dir("/tmp");
 

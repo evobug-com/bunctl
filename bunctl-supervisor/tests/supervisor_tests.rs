@@ -1,4 +1,4 @@
-use bunctl_core::{AppConfig, ProcessSupervisor};
+use bunctl_core::AppConfig;
 use bunctl_supervisor::create_supervisor;
 use std::path::PathBuf;
 use std::time::Duration;
