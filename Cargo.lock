@@ -198,7 +198,6 @@ dependencies = [
  "clap",
  "colored",
  "dashmap",
- "fnv",
  "libc",
  "nix",
  "once_cell",
