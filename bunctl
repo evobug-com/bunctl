@@ -225,8 +225,36 @@ init_app() {
         log_info "Runtime mode: Node.js compatibility"
     fi
 
+    # Determine logging mode (journal for non-blocking, file for legacy)
+    local log_mode="${BUNCTL_LOG_MODE:-journal}"
+    
     # Create service file with enhanced features
-    sudo tee "$service_file" > /dev/null << EOF
+    if [[ "$log_mode" == "journal" ]]; then
+        # Use systemd journal for non-blocking logging
+        sudo tee "$service_file" > /dev/null << EOF
+[Unit]
+Description=Bun App - $app_name
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=$(whoami)
+Group=www-data
+WorkingDirectory=$working_dir
+ExecStart=$bun_path $runtime_flag $working_dir/$entry_file
+Restart=always
+RestartSec=${BUNCTL_RESTART_DELAY:-10}
+StartLimitBurst=${BUNCTL_MAX_RESTARTS:-3}
+SyslogIdentifier=$app_name
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+EOF
+    else
+        # Legacy file-based logging (may cause blocking)
+        sudo tee "$service_file" > /dev/null << EOF
 [Unit]
 Description=Bun App - $app_name
 After=network.target
@@ -247,6 +275,7 @@ StartLimitBurst=${BUNCTL_MAX_RESTARTS:-3}
 SyslogIdentifier=$app_name
 Environment="NODE_ENV=production"
 EOF
+    fi
 
     # Add environment file if it exists
     if [[ -f "$app_dir/config/.env" ]]; then
@@ -1240,8 +1269,39 @@ update_services() {
                 runtime_flag="--bun"
             fi
             
+            # Determine logging mode
+            local log_mode="${BUNCTL_LOG_MODE:-journal}"
+            if [[ -f "$working_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
+                log_mode=$(jq -r '.log_mode // "journal"' "$working_dir/.bunctl.json" 2>/dev/null || echo "journal")
+            fi
+            
             # Regenerate entire service file
-            sudo tee "$service_file" > /dev/null << EOF
+            if [[ "$log_mode" == "journal" ]]; then
+                # Use systemd journal for non-blocking logging
+                sudo tee "$service_file" > /dev/null << EOF
+[Unit]
+Description=Bun App - $app_name
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=$user
+Group=www-data
+WorkingDirectory=$working_dir
+ExecStart=$bun_path $runtime_flag $working_dir/$entry_file
+Restart=always
+RestartSec=$restart_delay
+StartLimitBurst=$max_restarts
+SyslogIdentifier=$app_name
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+EOF
+            else
+                # Legacy file-based logging
+                sudo tee "$service_file" > /dev/null << EOF
 [Unit]
 Description=Bun App - $app_name
 After=network.target
@@ -1262,6 +1322,7 @@ StartLimitBurst=$max_restarts
 SyslogIdentifier=$app_name
 Environment="NODE_ENV=production"
 EOF
+            fi
 
             # Add environment file if it exists
             if [[ -f "$working_dir/config/.env" ]]; then
