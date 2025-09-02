@@ -244,6 +244,7 @@ User=$(whoami)
 Group=www-data
 WorkingDirectory=$working_dir
 ExecStart=$bun_path $runtime_flag $working_dir/$entry_file
+ExecReload=/bin/kill -USR1 \$MAINPID
 Restart=always
 RestartSec=${BUNCTL_RESTART_DELAY:-10}
 StartLimitBurst=${BUNCTL_MAX_RESTARTS:-3}
@@ -251,6 +252,7 @@ SyslogIdentifier=$app_name
 StandardOutput=journal
 StandardError=journal
 Environment="NODE_ENV=production"
+Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
 EOF
     else
         # Legacy file-based logging (may cause blocking)
@@ -268,12 +270,14 @@ Group=www-data
 WorkingDirectory=$working_dir
 ExecStartPre=/bin/sh -c 'echo "\\n===== Service started at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====" >> $app_dir/logs/app.log'
 ExecStart=/bin/sh -c '$bun_path $runtime_flag $working_dir/$entry_file 2>&1 | while IFS= read -r line; do echo "[\$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\")] \$line"; done >> $app_dir/logs/app.log 2>> $app_dir/logs/error.log'
+ExecReload=/bin/kill -USR1 \$MAINPID
 ExecStopPost=/bin/sh -c 'echo "===== Service stopped at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====\\n" >> $app_dir/logs/app.log'
 Restart=always
 RestartSec=${BUNCTL_RESTART_DELAY:-10}
 StartLimitBurst=${BUNCTL_MAX_RESTARTS:-3}
 SyslogIdentifier=$app_name
 Environment="NODE_ENV=production"
+Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
 EOF
     fi
 
@@ -656,12 +660,28 @@ stop_app() {
     log_success "Stopped: $app_name"
 }
 
+# Reload an app without stopping it
+reload_app() {
+    local app_name="$1"
+    local service_name=$(get_service_name "$app_name")
+    
+    # Reload systemd daemon first to pick up any config changes
+    sudo systemctl daemon-reload
+    
+    # Send reload signal to the app
+    sudo systemctl reload "$service_name" 2>/dev/null || sudo systemctl restart "$service_name"
+    log_success "Reloaded: $app_name"
+}
+
 # Restart an app with proper sequencing
 restart_app() {
     local app_name="$1"
     local grace_period="${2:-2}"  # Default 2 second grace period
     local service_name=$(get_service_name "$app_name")
     local service_file="$SYSTEMD_DIR/$service_name.service"
+    
+    # Reload systemd daemon first to pick up any file changes
+    sudo systemctl daemon-reload
     
     # Get working directory for log rotation
     if [[ -f "$service_file" ]]; then
@@ -1315,6 +1335,7 @@ User=$user
 Group=www-data
 WorkingDirectory=$working_dir
 ExecStart=$bun_path $runtime_flag $working_dir/$entry_file
+ExecReload=/bin/kill -USR1 \$MAINPID
 Restart=always
 RestartSec=$restart_delay
 StartLimitBurst=$max_restarts
@@ -1322,6 +1343,7 @@ SyslogIdentifier=$app_name
 StandardOutput=journal
 StandardError=journal
 Environment="NODE_ENV=production"
+Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
 EOF
             else
                 # Legacy file-based logging
@@ -1339,12 +1361,14 @@ Group=www-data
 WorkingDirectory=$working_dir
 ExecStartPre=/bin/sh -c 'echo "\\n===== Service started at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====" >> $working_dir/logs/app.log'
 ExecStart=/bin/sh -c '$bun_path $runtime_flag $working_dir/$entry_file 2>&1 | while IFS= read -r line; do echo "[\$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\")] \$line"; done >> $working_dir/logs/app.log 2>> $working_dir/logs/error.log'
+ExecReload=/bin/kill -USR1 \$MAINPID
 ExecStopPost=/bin/sh -c 'echo "===== Service stopped at \$(date +\"%%Y-%%m-%%d %%H:%%M:%%S\") =====\\n" >> $working_dir/logs/app.log'
 Restart=always
 RestartSec=$restart_delay
 StartLimitBurst=$max_restarts
 SyslogIdentifier=$app_name
 Environment="NODE_ENV=production"
+Environment="BUN_CONFIG_NO_CLEAR_TERMINAL=1"
 EOF
             fi
 
