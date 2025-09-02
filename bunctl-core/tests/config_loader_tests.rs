@@ -1,7 +1,6 @@
 use bunctl_core::config::ConfigLoader;
 use std::path::PathBuf;
 use tempfile::TempDir;
-use tokio;
 
 #[tokio::test]
 async fn test_load_bunctl_json() {

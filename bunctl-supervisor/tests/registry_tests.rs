@@ -153,7 +153,7 @@ fn test_registry_concurrent_access() {
     for i in 0..10 {
         let registry_clone = Arc::clone(&registry);
         let handle = thread::spawn(move || {
-            let app_id = AppId::new(&format!("app{}", i)).unwrap();
+            let app_id = AppId::new(format!("app{}", i)).unwrap();
             registry_clone.register(
                 app_id.clone(),
                 ProcessHandle {

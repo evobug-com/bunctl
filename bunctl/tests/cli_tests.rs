@@ -24,7 +24,7 @@ fn test_cli_help() {
 #[test]
 fn test_init_command_help() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
-    cmd.args(&["init", "--help"])
+    cmd.args(["init", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Initialize a new application"));
@@ -36,7 +36,7 @@ fn test_init_basic() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
     cmd.current_dir(&temp_dir)
-        .args(&["init", "--name", "test-app"])
+        .args(["init", "--name", "test-app"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Initialized app 'test-app'"));
@@ -54,7 +54,7 @@ fn test_init_ecosystem_format() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
     cmd.current_dir(&temp_dir)
-        .args(&["init", "--name", "eco-app", "--ecosystem"])
+        .args(["init", "--name", "eco-app", "--ecosystem"])
         .assert()
         .success()
         .stdout(predicate::str::contains("ecosystem.config.js"));
@@ -76,7 +76,7 @@ fn test_init_with_custom_settings() {
     fs::write(temp_dir.path().join("server.ts"), "console.log('test')").unwrap();
 
     cmd.current_dir(&temp_dir)
-        .args(&[
+        .args([
             "init",
             "--name",
             "custom-app",
@@ -108,7 +108,7 @@ fn test_init_with_custom_settings() {
 fn test_start_without_config() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
-    cmd.args(&["start", "nonexistent"]).assert().failure();
+    cmd.args(["start", "nonexistent"]).assert().failure();
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn test_status_command() {
 fn test_status_json() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
-    cmd.args(&["status", "--json"])
+    cmd.args(["status", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("{}"));
@@ -155,7 +155,7 @@ fn test_invalid_command() {
 fn test_delete_nonexistent() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
-    cmd.args(&["delete", "nonexistent"])
+    cmd.args(["delete", "nonexistent"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Deleted app nonexistent"));
@@ -165,7 +165,7 @@ fn test_delete_nonexistent() {
 fn test_logs_command() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
-    cmd.args(&["logs", "test-app"])
+    cmd.args(["logs", "test-app"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Showing logs for test-app"));
@@ -175,7 +175,7 @@ fn test_logs_command() {
 fn test_restart_command() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
-    cmd.args(&["restart", "test-app"])
+    cmd.args(["restart", "test-app"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Restarted app test-app"));
@@ -185,7 +185,7 @@ fn test_restart_command() {
 fn test_stop_command() {
     let mut cmd = Command::cargo_bin("bunctl").unwrap();
 
-    cmd.args(&["stop", "test-app"])
+    cmd.args(["stop", "test-app"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Stopped app test-app"));
