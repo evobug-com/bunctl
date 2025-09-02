@@ -2,7 +2,7 @@
 
 > **Production-grade process manager for Bun applications using systemd**
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/evobug-com/bunctl)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/evobug-com/bunctl)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/bun-%E2%89%A51.0.0-f472b6.svg)](https://bun.sh)
 [![systemd](https://img.shields.io/badge/systemd-required-orange.svg)](https://systemd.io/)
@@ -82,7 +82,7 @@ sudo chmod +x /usr/local/bin/bunctl
 
 # Verify installation
 bunctl --version
-# Output: bunctl version 2.2.0
+# Output: bunctl version 2.3.0
 
 # Install bash completion (optional but recommended)
 bunctl install-completion
@@ -261,6 +261,43 @@ bunctl restart-group 'api-*'
 # ✅ Restarted: api-worker
 ```
 
+#### `bunctl restart-all [--parallel] [--wait]`
+Restart all applications with optional parallel mode.
+
+```bash
+# Sequential restart (default)
+bunctl restart-all
+
+# Parallel restart for faster execution
+bunctl restart-all --parallel
+
+# Parallel with health verification
+bunctl restart-all --parallel --wait
+```
+
+#### `bunctl diagnose <name>`
+Run comprehensive diagnostics on an application.
+
+```bash
+bunctl diagnose my-app
+# Shows detailed diagnostic report including:
+# - Service configuration
+# - Port availability
+# - File permissions
+# - Log file status
+# - Recent errors
+# - Actionable recommendations
+```
+
+#### `bunctl reload <name>`
+Reload application without full restart (if supported).
+
+```bash
+bunctl reload my-app
+# Sends reload signal to the application
+# Falls back to restart if reload not supported
+```
+
 ### System Commands
 
 #### `bunctl backup [name]`
@@ -330,6 +367,7 @@ The recommended way to configure applications is using a `.bunctl.json` file in 
 | `restart_delay` | number | 10 | Seconds to wait before restart |
 | `max_restarts` | number | 3 | Maximum restart attempts in 60 seconds |
 | `env` | object | {} | Environment variables |
+| `log_mode` | string | "journal" | Logging mode: "journal" (non-blocking) or "file" (legacy) |
 
 ### Entry File Detection
 
@@ -747,14 +785,60 @@ bunctl update
 bunctl restart my-app
 ```
 
+#### Service Hangs on Restart
+```bash
+# Enable debug mode
+BUNCTL_DEBUG=true bunctl restart my-app
+
+# Or use diagnose command
+bunctl diagnose my-app
+
+# Use parallel restart for multiple services
+bunctl restart-all --parallel
+
+# Switch to journal logging (non-blocking)
+# Add to .bunctl.json:
+{
+  "log_mode": "journal"
+}
+```
+
+#### Files Not Updating After Deployment
+```bash
+# Force systemd daemon reload
+sudo systemctl daemon-reload
+
+# Restart with reload
+bunctl reload my-app
+
+# Clear Bun cache and restart
+rm -rf ~/.bun/install/cache
+bunctl restart my-app
+```
+
 ### Debugging Steps
 
-1. **Check Status**:
+1. **Run Diagnostics**:
+```bash
+bunctl diagnose my-app
+```
+
+2. **Enable Debug Mode**:
+```bash
+# For single command
+bunctl --debug restart my-app
+
+# Or set environment variable
+export BUNCTL_DEBUG=true
+bunctl restart my-app
+```
+
+3. **Check Status**:
 ```bash
 bunctl health my-app
 ```
 
-2. **View Logs**:
+4. **View Logs**:
 ```bash
 # Application logs
 bunctl logs my-app -n 200
