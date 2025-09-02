@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AppId(String);
@@ -15,19 +15,21 @@ impl AppId {
         }
         Ok(Self(sanitized))
     }
-    
+
     fn sanitize(name: &str) -> String {
         name.chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
             })
             .collect::<String>()
             .trim_matches('-')
             .to_string()
     }
-    
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -53,7 +55,7 @@ impl AppState {
     pub fn is_running(&self) -> bool {
         matches!(self, Self::Running)
     }
-    
+
     pub fn is_stopped(&self) -> bool {
         matches!(self, Self::Stopped)
     }
@@ -82,34 +84,34 @@ impl App {
             last_exit_code: Arc::new(RwLock::new(None)),
         }
     }
-    
+
     pub fn uptime(&self) -> Option<Duration> {
         self.start_time.read().map(|t| t.elapsed())
     }
-    
+
     pub fn set_state(&self, state: AppState) {
         *self.state.write() = state;
     }
-    
+
     pub fn get_state(&self) -> AppState {
         *self.state.read()
     }
-    
+
     pub fn set_pid(&self, pid: Option<u32>) {
         *self.pid.write() = pid;
         if pid.is_some() {
             *self.start_time.write() = Some(Instant::now());
         }
     }
-    
+
     pub fn get_pid(&self) -> Option<u32> {
         *self.pid.read()
     }
-    
+
     pub fn increment_restart_count(&self) {
         *self.restart_count.write() += 1;
     }
-    
+
     pub fn reset_restart_count(&self) {
         *self.restart_count.write() = 0;
     }

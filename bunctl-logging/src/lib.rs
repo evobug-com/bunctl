@@ -46,12 +46,12 @@ impl LogManager {
             config,
         }
     }
-    
+
     pub async fn get_writer(&self, app_id: &AppId) -> Result<Arc<AsyncLogWriter>> {
         if let Some(writer) = self.writers.get(app_id) {
             return Ok(writer.clone());
         }
-        
+
         let log_path = self.config.base_dir.join(format!("{}.log", app_id));
         let writer_config = LogWriterConfig {
             path: log_path,
@@ -63,25 +63,25 @@ impl LogManager {
             buffer_size: self.config.buffer_size,
             flush_interval: std::time::Duration::from_millis(self.config.flush_interval_ms),
         };
-        
+
         let writer = Arc::new(AsyncLogWriter::new(writer_config).await?);
         self.writers.insert(app_id.clone(), writer.clone());
         Ok(writer)
     }
-    
+
     pub async fn remove_writer(&self, app_id: &AppId) {
         if let Some((_, writer)) = self.writers.remove(app_id) {
             let _ = writer.flush().await;
         }
     }
-    
+
     pub async fn flush_all(&self) -> Result<()> {
         for writer in self.writers.iter() {
             writer.flush().await?;
         }
         Ok(())
     }
-    
+
     pub async fn rotate_all(&self) -> Result<()> {
         for writer in self.writers.iter() {
             writer.rotate().await?;

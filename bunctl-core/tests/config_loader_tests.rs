@@ -1,4 +1,4 @@
-use bunctl_core::config::{ConfigLoader, Config, AppConfig};
+use bunctl_core::config::{AppConfig, Config, ConfigLoader};
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio;
@@ -7,7 +7,7 @@ use tokio;
 async fn test_load_bunctl_json() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("bunctl.json");
-    
+
     let config = r#"{
         "apps": [
             {
@@ -29,12 +29,12 @@ async fn test_load_bunctl_json() {
             "max_parallel_starts": 4
         }
     }"#;
-    
+
     std::fs::write(&config_path, config).unwrap();
-    
+
     let loader = ConfigLoader::new();
     let loaded = loader.load_file(&config_path).await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "test-app");
     assert_eq!(loaded.apps[0].command, "bun");
@@ -47,7 +47,7 @@ async fn test_load_bunctl_json() {
 async fn test_load_ecosystem_json() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("ecosystem.config.json");
-    
+
     let config = r#"{
         "apps": [
             {
@@ -65,12 +65,12 @@ async fn test_load_ecosystem_json() {
             }
         ]
     }"#;
-    
+
     std::fs::write(&config_path, config).unwrap();
-    
+
     let loader = ConfigLoader::new();
     let loaded = loader.load_file(&config_path).await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "api");
     assert!(loaded.apps[0].command.contains("bun"));
@@ -81,7 +81,7 @@ async fn test_load_ecosystem_json() {
 #[tokio::test]
 async fn test_auto_discovery_bunctl_json() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let config = r#"{
         "apps": [
             {
@@ -90,14 +90,13 @@ async fn test_auto_discovery_bunctl_json() {
             }
         ]
     }"#;
-    
+
     std::fs::write(temp_dir.path().join("bunctl.json"), config).unwrap();
-    
+
     // Use with_search_path instead of changing current directory
-    let loader = ConfigLoader::new()
-        .with_search_path(temp_dir.path());
+    let loader = ConfigLoader::new().with_search_path(temp_dir.path());
     let loaded = loader.load().await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "discovered");
 }
@@ -106,7 +105,7 @@ async fn test_auto_discovery_bunctl_json() {
 #[ignore = "Requires Bun to be installed"]
 async fn test_auto_discovery_ecosystem_js() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create a simple ecosystem.config.js that exports JSON
     let config = r#"module.exports = {
         apps: [{
@@ -115,15 +114,14 @@ async fn test_auto_discovery_ecosystem_js() {
             interpreter: 'node'
         }]
     };"#;
-    
+
     std::fs::write(temp_dir.path().join("ecosystem.config.js"), config).unwrap();
-    
+
     // This test would need Bun installed to actually work
     // For now, we'll test the fallback behavior
-    let loader = ConfigLoader::new()
-        .with_search_path(temp_dir.path());
+    let loader = ConfigLoader::new().with_search_path(temp_dir.path());
     let loaded = loader.load().await;
-    
+
     // Should either succeed if Bun is installed, or return default config
     assert!(loaded.is_ok());
 }
@@ -132,7 +130,7 @@ async fn test_auto_discovery_ecosystem_js() {
 async fn test_load_package_json_with_bunctl_section() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("package.json");
-    
+
     let config = r#"{
         "name": "my-app",
         "version": "1.0.0",
@@ -150,12 +148,12 @@ async fn test_load_package_json_with_bunctl_section() {
             ]
         }
     }"#;
-    
+
     std::fs::write(&config_path, config).unwrap();
-    
+
     let loader = ConfigLoader::new();
     let loaded = loader.load_file(&config_path).await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "my-app");
     assert_eq!(loaded.apps[0].command, "bun");
@@ -167,7 +165,7 @@ async fn test_load_package_json_with_bunctl_section() {
 async fn test_load_package_json_with_pm2_section() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("package.json");
-    
+
     let config = r#"{
         "name": "pm2-app",
         "version": "1.0.0",
@@ -181,12 +179,12 @@ async fn test_load_package_json_with_pm2_section() {
             ]
         }
     }"#;
-    
+
     std::fs::write(&config_path, config).unwrap();
-    
+
     let loader = ConfigLoader::new();
     let loaded = loader.load_file(&config_path).await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "pm2-app");
 }
@@ -195,7 +193,7 @@ async fn test_load_package_json_with_pm2_section() {
 async fn test_load_package_json_fallback_to_start_script() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("package.json");
-    
+
     let config = r#"{
         "name": "simple-app",
         "version": "1.0.0",
@@ -203,12 +201,12 @@ async fn test_load_package_json_fallback_to_start_script() {
             "start": "node server.js"
         }
     }"#;
-    
+
     std::fs::write(&config_path, config).unwrap();
-    
+
     let loader = ConfigLoader::new();
     let loaded = loader.load_file(&config_path).await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "simple-app");
     assert_eq!(loaded.apps[0].command, "bun");
@@ -226,9 +224,9 @@ async fn test_load_nonexistent_file() {
 async fn test_load_invalid_json() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("invalid.json");
-    
+
     std::fs::write(&config_path, "{ invalid json }").unwrap();
-    
+
     let loader = ConfigLoader::new();
     let result = loader.load_file(&config_path).await;
     assert!(result.is_err());
@@ -239,7 +237,7 @@ async fn test_custom_search_paths() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("config");
     std::fs::create_dir(&config_dir).unwrap();
-    
+
     let config = r#"{
         "apps": [
             {
@@ -248,14 +246,13 @@ async fn test_custom_search_paths() {
             }
         ]
     }"#;
-    
+
     std::fs::write(config_dir.join("bunctl.json"), config).unwrap();
-    
-    let loader = ConfigLoader::new()
-        .with_search_path(&config_dir);
-    
+
+    let loader = ConfigLoader::new().with_search_path(&config_dir);
+
     let loaded = loader.load().await.unwrap();
-    
+
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "custom-path-app");
 }
@@ -263,12 +260,11 @@ async fn test_custom_search_paths() {
 #[tokio::test]
 async fn test_empty_config() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // No config files present
-    let loader = ConfigLoader::new()
-        .with_search_path(temp_dir.path());
+    let loader = ConfigLoader::new().with_search_path(temp_dir.path());
     let loaded = loader.load().await.unwrap();
-    
+
     // Should return default empty config
     assert_eq!(loaded.apps.len(), 0);
 }

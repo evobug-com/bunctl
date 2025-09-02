@@ -1,17 +1,17 @@
 pub mod ecosystem;
 pub mod loader;
 
+use arc_swap::ArcSwap;
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
 use tokio::fs;
-use parking_lot::RwLock;
-use arc_swap::ArcSwap;
 
-pub use ecosystem::{EcosystemConfig, EcosystemApp};
+pub use ecosystem::{EcosystemApp, EcosystemConfig};
 pub use loader::ConfigLoader;
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,32 +155,32 @@ impl ConfigWatcher {
         let path = path.as_ref().to_path_buf();
         let config = Self::load_config(&path).await?;
         let checksum = Self::compute_checksum(&path).await?;
-        
+
         Ok(Self {
             path,
             current: ArcSwap::new(Arc::new(config)),
             checksum: Arc::new(RwLock::new(checksum)),
         })
     }
-    
+
     async fn load_config(path: &Path) -> crate::Result<Config> {
         let content = fs::read_to_string(path).await?;
         let config: Config = serde_json::from_str(&content)
             .map_err(|e| crate::Error::Config(format!("Failed to parse config: {}", e)))?;
         Ok(config)
     }
-    
+
     async fn compute_checksum(path: &Path) -> crate::Result<Vec<u8>> {
         let content = fs::read(path).await?;
         let mut hasher = Sha256::new();
         hasher.update(&content);
         Ok(hasher.finalize().to_vec())
     }
-    
+
     pub async fn check_reload(&self) -> crate::Result<bool> {
         let new_checksum = Self::compute_checksum(&self.path).await?;
         let current_checksum = self.checksum.read().clone();
-        
+
         if new_checksum != current_checksum {
             let new_config = Self::load_config(&self.path).await?;
             self.current.store(Arc::new(new_config));
@@ -190,7 +190,7 @@ impl ConfigWatcher {
             Ok(false)
         }
     }
-    
+
     pub fn get(&self) -> Arc<Config> {
         self.current.load_full()
     }
@@ -244,15 +244,17 @@ impl From<AppConfigRaw> for AppConfig {
                     let args = parts.into_iter().skip(1).collect();
                     (command, args)
                 }
-                _ => (raw.command, Vec::new())
+                _ => (raw.command, Vec::new()),
             }
         };
-        
+
         AppConfig {
             name: raw.name,
             command,
             args,
-            cwd: raw.cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))),
+            cwd: raw
+                .cwd
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))),
             env: raw.env.unwrap_or_default(),
             auto_start: raw.auto_start.unwrap_or(false),
             restart_policy: raw.restart_policy.unwrap_or(RestartPolicy::OnFailure),
