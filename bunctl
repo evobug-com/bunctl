@@ -1,10 +1,18 @@
 #!/bin/bash
 
 # bunctl - A pm2-like tool for managing Bun applications with systemd
-# Version: 2.2.0
+# Version: 2.3.0
 # Place this in /usr/local/bin/bunctl and chmod +x
 
 set -e
+
+# Debug mode
+DEBUG="${BUNCTL_DEBUG:-false}"
+if [[ "$1" == "--debug" ]] || [[ "$DEBUG" == "true" ]]; then
+    DEBUG=true
+    set -x  # Enable bash debug output
+    shift  # Remove --debug from arguments
+fi
 
 # Configuration
 SYSTEMD_DIR="/etc/systemd/system"
@@ -12,7 +20,7 @@ SERVICE_PREFIX="bun-app"
 SITES_DIR="/var/www/sites"  # Adjust this to your sites directory
 CONFIG_DIR="$HOME/.config/bunctl"
 DB_FILE="$CONFIG_DIR/apps.db"
-VERSION="2.2.0"
+VERSION="2.3.0"
 
 # Colors - using printf-compatible format
 RED=$'\e[0;31m'
@@ -33,6 +41,11 @@ log_success() { echo -e "${GREEN}✅${NC} $1"; }
 log_error() { echo -e "${RED}❌${NC} $1"; }
 log_info() { echo -e "${BLUE}ℹ️${NC} $1"; }
 log_warn() { echo -e "${YELLOW}⚠️${NC} $1"; }
+log_debug() { 
+    if [[ "$DEBUG" == "true" ]]; then
+        echo -e "${MAGENTA}[DEBUG]${NC} $1" >&2
+    fi
+}
 
 get_app_name() {
     local path="$1"
@@ -393,6 +406,135 @@ set_env() {
     log_info "Restart the app to apply: bunctl restart $app_name"
 }
 
+# Diagnose issues with an app
+diagnose_app() {
+    local app_name="$1"
+    local service_name=$(get_service_name "$app_name")
+    local service_file="$SYSTEMD_DIR/$service_name.service"
+    
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}Diagnostic Report: $app_name${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    # Check if service exists
+    if [[ ! -f "$service_file" ]]; then
+        log_error "Service file not found: $service_file"
+        exit 1
+    fi
+    
+    # Extract service configuration
+    local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
+    local exec_start=$(grep "^ExecStart=" "$service_file" | sed 's/^ExecStart=//')
+    local user=$(grep "^User=" "$service_file" | sed 's/^User=//')
+    
+    echo -e "${YELLOW}Service Configuration:${NC}"
+    echo "  Service File: $service_file"
+    echo "  Working Dir:  $working_dir"
+    echo "  User:         $user"
+    echo "  Command:      $(echo "$exec_start" | head -c 80)..."
+    echo
+    
+    # Check service status
+    echo -e "${YELLOW}Service Status:${NC}"
+    local status=$(systemctl is-active "$service_name")
+    local enabled=$(systemctl is-enabled "$service_name" 2>/dev/null || echo "disabled")
+    echo "  Status:       $status"
+    echo "  Boot Enabled: $enabled"
+    
+    # Check for recent failures
+    local failures=$(systemctl show "$service_name" --property=NRestarts --value)
+    if [[ "$failures" -gt 0 ]]; then
+        echo -e "  ${RED}Restarts:     $failures (may indicate crashes)${NC}"
+    fi
+    echo
+    
+    # Check port availability
+    if [[ -n "$working_dir" ]]; then
+        echo -e "${YELLOW}Port Check:${NC}"
+        # Try to find port from .env or config
+        local port=""
+        if [[ -f "$working_dir/.env" ]]; then
+            port=$(grep "^PORT=" "$working_dir/.env" | cut -d'=' -f2)
+        fi
+        if [[ -f "$working_dir/.bunctl.json" ]] && command -v jq &> /dev/null; then
+            port=$(jq -r '.port // ""' "$working_dir/.bunctl.json" 2>/dev/null)
+        fi
+        
+        if [[ -n "$port" ]]; then
+            if netstat -tuln 2>/dev/null | grep -q ":$port "; then
+                local pid=$(lsof -ti :$port 2>/dev/null || echo "unknown")
+                if [[ "$status" == "active" ]]; then
+                    echo -e "  Port $port:   ${GREEN}In use by PID $pid (expected)${NC}"
+                else
+                    echo -e "  Port $port:   ${RED}In use by PID $pid (conflict!)${NC}"
+                fi
+            else
+                if [[ "$status" == "active" ]]; then
+                    echo -e "  Port $port:   ${YELLOW}Not listening (service may be starting)${NC}"
+                else
+                    echo -e "  Port $port:   ${GREEN}Available${NC}"
+                fi
+            fi
+        else
+            echo "  Port:         Not configured"
+        fi
+        echo
+    fi
+    
+    # Check file permissions
+    echo -e "${YELLOW}File Permissions:${NC}"
+    if [[ -d "$working_dir" ]]; then
+        local dir_owner=$(stat -c '%U' "$working_dir" 2>/dev/null || echo "unknown")
+        local dir_perms=$(stat -c '%a' "$working_dir" 2>/dev/null || echo "unknown")
+        echo "  Directory:    $dir_owner ($dir_perms)"
+        
+        if [[ "$dir_owner" != "$user" ]] && [[ "$user" != "root" ]]; then
+            echo -e "  ${YELLOW}Warning: Directory owned by $dir_owner but service runs as $user${NC}"
+        fi
+    fi
+    
+    # Check log files
+    echo
+    echo -e "${YELLOW}Log Files:${NC}"
+    if [[ -f "$working_dir/logs/app.log" ]]; then
+        local log_size=$(du -h "$working_dir/logs/app.log" 2>/dev/null | cut -f1)
+        echo "  app.log:      $log_size"
+    else
+        echo "  app.log:      Not found"
+    fi
+    
+    if [[ -f "$working_dir/logs/error.log" ]]; then
+        local error_size=$(du -h "$working_dir/logs/error.log" 2>/dev/null | cut -f1)
+        local error_lines=$(wc -l < "$working_dir/logs/error.log" 2>/dev/null || echo "0")
+        if [[ "$error_lines" -gt 0 ]]; then
+            echo -e "  error.log:    ${RED}$error_size ($error_lines errors)${NC}"
+        else
+            echo "  error.log:    $error_size (empty)"
+        fi
+    fi
+    
+    # Show recent errors if any
+    if [[ "$status" == "failed" ]] || [[ "$failures" -gt 0 ]]; then
+        echo
+        echo -e "${RED}Recent Errors:${NC}"
+        sudo journalctl -u "$service_name" -p err -n 10 --no-pager
+    fi
+    
+    # Recommendations
+    echo
+    echo -e "${YELLOW}Recommendations:${NC}"
+    if [[ "$status" == "failed" ]]; then
+        echo "  • Check logs with: bunctl logs $app_name"
+        echo "  • Try restarting: bunctl restart $app_name"
+    fi
+    if [[ "$failures" -gt 3 ]]; then
+        echo "  • Service is crash-looping. Check application code and dependencies"
+    fi
+    if [[ "$enabled" != "enabled" ]]; then
+        echo "  • Enable auto-start: sudo systemctl enable $service_name"
+    fi
+}
+
 # Health check for an app
 health_check() {
     local app_name="$1"
@@ -697,40 +839,56 @@ restart_app() {
     local service_name=$(get_service_name "$app_name")
     local service_file="$SYSTEMD_DIR/$service_name.service"
     
+    log_debug "Restarting service: $service_name"
+    
     # Reload systemd daemon first to pick up any file changes
+    log_debug "Reloading systemd daemon..."
     sudo systemctl daemon-reload
     
     # Get working directory for log rotation
     if [[ -f "$service_file" ]]; then
         local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
+        log_debug "Working directory: $working_dir"
         
         # Rotate logs asynchronously to avoid blocking
         rotate_logs_async "$working_dir" &
     fi
 
     # Stop the service first
+    log_debug "Stopping service..."
+    local stop_start=$(date +%s)
     sudo systemctl stop "$service_name"
     
     # Wait for service to fully stop
     local max_wait=10
     local waited=0
     while [[ $(systemctl is-active "$service_name") != "inactive" ]] && [[ $waited -lt $max_wait ]]; do
+        log_debug "Waiting for service to stop... (${waited}s)"
         sleep 0.5
         waited=$((waited + 1))
     done
     
+    local stop_end=$(date +%s)
+    log_debug "Service stopped in $((stop_end - stop_start))s"
+    
     # Add grace period to ensure ports are released
+    log_debug "Grace period: ${grace_period}s"
     sleep "$grace_period"
     
     # Start the service
+    log_debug "Starting service..."
+    local start_begin=$(date +%s)
     sudo systemctl start "$service_name"
     
     # Verify it started successfully
     if systemctl is-active --quiet "$service_name"; then
+        local start_end=$(date +%s)
+        log_debug "Service started in $((start_end - start_begin))s"
         log_success "Restarted: $app_name"
     else
         log_error "Failed to restart: $app_name"
-        sudo journalctl -u "$service_name" -n 5 --no-pager
+        log_debug "Showing last 10 journal entries:"
+        sudo journalctl -u "$service_name" -n 10 --no-pager
         exit 1
     fi
 }
@@ -1564,6 +1722,13 @@ case "${1:-}" in
         # Pass all arguments to show_logs for proper parsing
         shift  # Remove 'logs' from arguments
         show_logs "$@"
+        ;;
+    diagnose)
+        if [[ -z "$2" ]]; then
+            log_error "App name required"
+            exit 1
+        fi
+        diagnose_app "$2"
         ;;
     health)
         if [[ -z "$2" ]]; then
