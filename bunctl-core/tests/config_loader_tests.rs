@@ -1,4 +1,4 @@
-use bunctl_core::config::{AppConfig, Config, ConfigLoader};
+use bunctl_core::config::ConfigLoader;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio;

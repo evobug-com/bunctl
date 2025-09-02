@@ -18,14 +18,30 @@ pub struct LinuxSupervisor {
     registry: Arc<ProcessRegistry>,
     event_tx: mpsc::Sender<SupervisorEvent>,
     event_rx: parking_lot::Mutex<Option<mpsc::Receiver<SupervisorEvent>>>,
-    cgroup_root: PathBuf,
+    cgroup_root: Option<PathBuf>,
     cgroups: dashmap::DashMap<AppId, PathBuf>,
+    use_cgroups: bool,
 }
 
 impl LinuxSupervisor {
     pub async fn new() -> Result<Self> {
         let (event_tx, event_rx) = mpsc::channel(1024);
-        let cgroup_root = Self::find_cgroup_root()?;
+
+        // Try to detect cgroups, but don't fail if unavailable
+        let (cgroup_root, use_cgroups) = match Self::find_cgroup_root() {
+            Ok(root) => {
+                // Check if we have permission to use cgroups
+                let test_path = root.join("bunctl");
+                match std::fs::create_dir(&test_path) {
+                    Ok(_) => {
+                        let _ = std::fs::remove_dir(&test_path);
+                        (Some(root), true)
+                    }
+                    Err(_) => (None, false),
+                }
+            }
+            Err(_) => (None, false),
+        };
 
         Ok(Self {
             registry: Arc::new(ProcessRegistry::new()),
@@ -33,6 +49,7 @@ impl LinuxSupervisor {
             event_rx: parking_lot::Mutex::new(Some(event_rx)),
             cgroup_root,
             cgroups: dashmap::DashMap::new(),
+            use_cgroups,
         })
     }
 
@@ -46,7 +63,12 @@ impl LinuxSupervisor {
     }
 
     async fn create_cgroup(&self, app_id: &AppId) -> Result<PathBuf> {
-        let cgroup_path = self.cgroup_root.join("bunctl").join(app_id.as_str());
+        let cgroup_root = self
+            .cgroup_root
+            .as_ref()
+            .ok_or_else(|| Error::Supervisor("cgroups not available".to_string()))?;
+
+        let cgroup_path = cgroup_root.join("bunctl").join(app_id.as_str());
 
         tokio::fs::create_dir_all(&cgroup_path).await?;
 
@@ -94,6 +116,43 @@ impl LinuxSupervisor {
 
         let _ = tokio::fs::remove_dir(cgroup_path).await;
         Ok(())
+    }
+
+    async fn spawn_simple(&self, config: &AppConfig) -> Result<ProcessHandle> {
+        let app_id = AppId::new(&config.name)?;
+
+        let mut builder = bunctl_core::process::ProcessBuilder::new(&config.command);
+        builder = builder
+            .args(&config.args)
+            .current_dir(&config.cwd)
+            .envs(&config.env);
+
+        if let Some(uid) = config.uid {
+            builder = builder.uid(uid);
+        }
+        if let Some(gid) = config.gid {
+            builder = builder.gid(gid);
+        }
+
+        let child = builder.spawn().await?;
+        let pid = child.id().unwrap();
+
+        let handle = ProcessHandle::new(pid, app_id.clone(), child);
+        self.registry.register(
+            app_id.clone(),
+            ProcessHandle {
+                pid,
+                app_id: app_id.clone(),
+                inner: None,
+            },
+        );
+
+        let _ = self
+            .event_tx
+            .send(SupervisorEvent::ProcessStarted { app: app_id, pid })
+            .await;
+
+        Ok(handle)
     }
 
     async fn spawn_with_cgroup(&self, config: &AppConfig) -> Result<ProcessHandle> {
@@ -164,7 +223,11 @@ impl LinuxSupervisor {
 #[async_trait]
 impl ProcessSupervisor for LinuxSupervisor {
     async fn spawn(&self, config: &AppConfig) -> Result<ProcessHandle> {
-        self.spawn_with_cgroup(config).await
+        if self.use_cgroups {
+            self.spawn_with_cgroup(config).await
+        } else {
+            self.spawn_simple(config).await
+        }
     }
 
     async fn kill_tree(&self, handle: &ProcessHandle) -> Result<()> {
@@ -215,9 +278,12 @@ impl ProcessSupervisor for LinuxSupervisor {
     }
 
     async fn set_resource_limits(&self, handle: &ProcessHandle, config: &AppConfig) -> Result<()> {
-        if let Some(cgroup_path) = self.cgroups.get(&handle.app_id) {
-            self.set_cgroup_limits(&cgroup_path, config).await?;
+        if self.use_cgroups {
+            if let Some(cgroup_path) = self.cgroups.get(&handle.app_id) {
+                self.set_cgroup_limits(&cgroup_path, config).await?;
+            }
         }
+        // When cgroups are not available, resource limits cannot be set dynamically
         Ok(())
     }
 

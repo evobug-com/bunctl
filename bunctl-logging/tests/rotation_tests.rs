@@ -1,6 +1,5 @@
 use bunctl_logging::{LogRotation, RotationConfig, RotationStrategy};
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio;
 
