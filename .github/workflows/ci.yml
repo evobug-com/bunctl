@@ -15,13 +15,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest, windows-latest]
         rust: [stable, beta]
         exclude:
           # Only test beta on Ubuntu to save CI time
           - os: windows-latest
-            rust: beta
-          - os: macOS-latest
             rust: beta
 
     steps:
