@@ -262,14 +262,19 @@ impl ProcessBuilder {
 
         #[cfg(unix)]
         {
+            use std::os::unix::process::CommandExt;
             if let Some(uid) = self.uid {
-                use std::os::unix::process::CommandExt;
                 cmd.uid(uid);
             }
             if let Some(gid) = self.gid {
-                use std::os::unix::process::CommandExt;
                 cmd.gid(gid);
             }
+        }
+        
+        #[cfg(not(unix))]
+        {
+            let _ = self.uid;
+            let _ = self.gid;
         }
 
         cmd.spawn()
