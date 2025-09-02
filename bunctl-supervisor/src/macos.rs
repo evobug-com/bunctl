@@ -52,12 +52,16 @@ impl MacOSSupervisor {
         unsafe {
             let pgid = libc::setpgid(pid as i32, 0);
             if pgid == -1 {
-                return Err(Error::Supervisor(format!(
-                    "Failed to create process group: {}",
+                // In CI or restricted environments, process group creation might fail
+                // Log warning but don't fail the operation
+                eprintln!(
+                    "Warning: Failed to create process group for {}: {}",
+                    app_id,
                     std::io::Error::last_os_error()
-                )));
+                );
+            } else {
+                self.process_groups.insert(app_id.clone(), pid as i32);
             }
-            self.process_groups.insert(app_id.clone(), pid as i32);
         }
 
         let handle = ProcessHandle::new(pid, app_id.clone(), child);
