@@ -28,7 +28,6 @@ arc-swap = { workspace = true }
 chrono = "0.4"
 tabled = "0.20"
 colored = "3.0"
-fnv = "1.0.6"  # Minimum version with FnvHashMap for papergrid compatibility
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
