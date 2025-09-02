@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'bunctl-rs-v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-and-upload:
+    name: Build and Upload - ${{ matrix.platform.release_for }}
+    needs: create-release
+    strategy:
+      matrix:
+        platform:
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: bunctl.exe
+            name: bunctl-Windows-x86_64.zip
+            command: build
+
+          - release_for: macOS-x86_64
+            os: macOS-latest
+            target: x86_64-apple-darwin
+            bin: bunctl
+            name: bunctl-Darwin-x86_64.tar.gz
+            command: build
+
+          - release_for: macOS-aarch64
+            os: macOS-latest
+            target: aarch64-apple-darwin
+            bin: bunctl
+            name: bunctl-Darwin-aarch64.tar.gz
+            command: build
+
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: bunctl
+            name: bunctl-Linux-x86_64.tar.gz
+            command: build
+
+          - release_for: Linux-aarch64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            bin: bunctl
+            name: bunctl-Linux-aarch64.tar.gz
+            command: build
+
+          - release_for: Linux-musl-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bin: bunctl
+            name: bunctl-Linux-musl-x86_64.tar.gz
+            command: build
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install musl-tools (Linux musl)
+        if: matrix.platform.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: |
+          cd bunctl-rs
+          cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Strip binary (Linux/macOS)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          cd bunctl-rs
+          strip target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+
+      - name: Package (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        run: |
+          cd bunctl-rs
+          7z a ../${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+
+      - name: Package (Unix)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          cd bunctl-rs
+          tar czf ../${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }}
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.platform.name }}
+          asset_name: ${{ matrix.platform.name }}
+          asset_content_type: application/octet-stream

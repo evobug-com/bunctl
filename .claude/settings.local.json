@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo fix:*)",
+      "Bash(RUST_BACKTRACE=1 cargo test test_auto_discovery_bunctl_json -- --nocapture)",
+      "Bash(cargo run:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
