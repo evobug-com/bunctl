@@ -118,7 +118,7 @@ pub enum HealthCheckType {
     Exec { command: String, args: Vec<String> },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     pub apps: Vec<AppConfig>,
     #[serde(default)]

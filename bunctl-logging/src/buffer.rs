@@ -21,7 +21,7 @@ impl Default for LineBufferConfig {
 #[derive(Debug)]
 pub struct LineBuffer {
     config: LineBufferConfig,
-    current: Arc<Mutex<BytesMut>>,
+    _current: Arc<Mutex<BytesMut>>,
     lines: Arc<Mutex<VecDeque<Bytes>>>,
     incomplete: Arc<Mutex<BytesMut>>,
 }
@@ -30,7 +30,7 @@ impl LineBuffer {
     pub fn new(config: LineBufferConfig) -> Self {
         Self {
             config,
-            current: Arc::new(Mutex::new(BytesMut::with_capacity(4096))),
+            _current: Arc::new(Mutex::new(BytesMut::with_capacity(4096))),
             lines: Arc::new(Mutex::new(VecDeque::new())),
             incomplete: Arc::new(Mutex::new(BytesMut::new())),
         }

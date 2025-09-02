@@ -77,12 +77,11 @@ impl Daemon {
                 }
 
                 _ = config_check_interval.tick() => {
-                    if let Some(ref watcher) = self.config_watcher {
-                        if watcher.check_reload().await? {
+                    if let Some(ref watcher) = self.config_watcher
+                        && watcher.check_reload().await? {
                             info!("Configuration reloaded");
                             self.reload_config().await?;
                         }
-                    }
                 }
 
                 _ = health_check_interval.tick() => {
@@ -271,25 +270,24 @@ impl Daemon {
 
     async fn perform_health_checks(&self) {
         for app in self.apps.iter() {
-            if app.get_state() == AppState::Running {
-                if let Some(pid) = app.get_pid() {
-                    match self.supervisor.get_process_info(pid).await {
-                        Ok(info) => {
-                            let config = app.config.read();
-                            if let Some(max_memory) = config.max_memory {
-                                if let Some(memory) = info.memory_bytes {
-                                    if memory > max_memory {
-                                        warn!(
-                                            "App {} exceeds memory limit: {} > {}",
-                                            app.id, memory, max_memory
-                                        );
-                                    }
-                                }
-                            }
+            if app.get_state() == AppState::Running
+                && let Some(pid) = app.get_pid()
+            {
+                match self.supervisor.get_process_info(pid).await {
+                    Ok(info) => {
+                        let config = app.config.read();
+                        if let Some(max_memory) = config.max_memory
+                            && let Some(memory) = info.memory_bytes
+                            && memory > max_memory
+                        {
+                            warn!(
+                                "App {} exceeds memory limit: {} > {}",
+                                app.id, memory, max_memory
+                            );
                         }
-                        Err(e) => {
-                            error!("Failed to get process info for {}: {}", app.id, e);
-                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to get process info for {}: {}", app.id, e);
                     }
                 }
             }
@@ -337,10 +335,10 @@ impl Daemon {
                     inner: None,
                 };
 
-                let config = app.config.read();
+                let stop_timeout = app.config.read().stop_timeout;
                 match self
                     .supervisor
-                    .graceful_stop(&mut handle.clone(), config.stop_timeout)
+                    .graceful_stop(&mut handle.clone(), stop_timeout)
                     .await
                 {
                     Ok(_) => info!("App {} stopped gracefully", app.id),

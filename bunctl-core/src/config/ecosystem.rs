@@ -128,10 +128,10 @@ impl EcosystemApp {
             if let Some(prod_env) = &self.env_production {
                 env.extend(prod_env.clone());
             }
-        } else if node_env == "development" {
-            if let Some(dev_env) = &self.env_development {
-                env.extend(dev_env.clone());
-            }
+        } else if node_env == "development"
+            && let Some(dev_env) = &self.env_development
+        {
+            env.extend(dev_env.clone());
         }
 
         let max_memory = self
@@ -145,7 +145,7 @@ impl EcosystemApp {
             crate::config::RestartPolicy::No
         };
 
-        let config = crate::AppConfig {
+        crate::AppConfig {
             name: self.name.clone(),
             command,
             args,
@@ -172,9 +172,7 @@ impl EcosystemApp {
                 jitter: 0.3,
                 max_attempts: self.max_restarts,
             },
-        };
-
-        config
+        }
     }
 }
 

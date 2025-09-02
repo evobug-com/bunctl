@@ -6,8 +6,8 @@ pub struct ConfigLoader {
     search_paths: Vec<PathBuf>,
 }
 
-impl ConfigLoader {
-    pub fn new() -> Self {
+impl Default for ConfigLoader {
+    fn default() -> Self {
         Self {
             search_paths: vec![
                 PathBuf::from("."),
@@ -15,6 +15,12 @@ impl ConfigLoader {
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             ],
         }
+    }
+}
+
+impl ConfigLoader {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn with_search_path(mut self, path: impl Into<PathBuf>) -> Self {
@@ -58,10 +64,10 @@ impl ConfigLoader {
 
             // Try package.json
             let package_json = dir.join("package.json");
-            if package_json.exists() {
-                if let Ok(config) = self.load_package_json(&package_json).await {
-                    return Ok(config);
-                }
+            if package_json.exists()
+                && let Ok(config) = self.load_package_json(&package_json).await
+            {
+                return Ok(config);
             }
         }
 
@@ -99,28 +105,27 @@ impl ConfigLoader {
         }
 
         // Check for pm2 section (PM2 compatibility)
-        if let Some(pm2_section) = package.get("pm2") {
-            if let Ok(ecosystem) = serde_json::from_value::<EcosystemConfig>(pm2_section.clone()) {
-                return Ok(self.ecosystem_to_config(ecosystem));
-            }
+        if let Some(pm2_section) = package.get("pm2")
+            && let Ok(ecosystem) = serde_json::from_value::<EcosystemConfig>(pm2_section.clone())
+        {
+            return Ok(self.ecosystem_to_config(ecosystem));
         }
 
         // Try to create a simple config from package.json scripts
-        if let Some(name) = package.get("name").and_then(|v| v.as_str()) {
-            if let Some(scripts) = package.get("scripts").and_then(|v| v.as_object()) {
-                if let Some(_start_script) = scripts.get("start").and_then(|v| v.as_str()) {
-                    let app = AppConfig {
-                        name: name.to_string(),
-                        command: "bun".to_string(),
-                        args: vec!["run".to_string(), "start".to_string()],
-                        ..Default::default()
-                    };
-                    return Ok(Config {
-                        apps: vec![app],
-                        daemon: Default::default(),
-                    });
-                }
-            }
+        if let Some(name) = package.get("name").and_then(|v| v.as_str())
+            && let Some(scripts) = package.get("scripts").and_then(|v| v.as_object())
+            && let Some(_start_script) = scripts.get("start").and_then(|v| v.as_str())
+        {
+            let app = AppConfig {
+                name: name.to_string(),
+                command: "bun".to_string(),
+                args: vec!["run".to_string(), "start".to_string()],
+                ..Default::default()
+            };
+            return Ok(Config {
+                apps: vec![app],
+                daemon: Default::default(),
+            });
         }
 
         Err(crate::Error::Config(
@@ -162,15 +167,6 @@ impl ConfigLoader {
                     self.load_ecosystem_json(path).await
                 }
             }
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            apps: Vec::new(),
-            daemon: super::DaemonConfig::default(),
         }
     }
 }
