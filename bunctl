@@ -62,6 +62,41 @@ format_memory() {
     fi
 }
 
+# Rotate logs asynchronously with file locking
+rotate_logs_async() {
+    local working_dir="$1"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    # Ensure logs directory exists
+    mkdir -p "$working_dir/logs"
+    
+    # Rotate app.log with file locking
+    if [[ -f "$working_dir/logs/app.log" ]]; then
+        (
+            flock -n 200 || exit 1  # Non-blocking lock, exit if can't acquire
+            if [[ -s "$working_dir/logs/app.log" ]]; then
+                cp "$working_dir/logs/app.log" "$working_dir/logs/app.${timestamp}.log" 2>/dev/null
+                > "$working_dir/logs/app.log"  # Truncate instead of move to avoid file handle issues
+            fi
+            # Keep only last 10 log files
+            ls -t "$working_dir/logs"/app.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+        ) 200>"$working_dir/logs/.app.log.lock" &
+    fi
+    
+    # Rotate error.log with file locking
+    if [[ -f "$working_dir/logs/error.log" ]]; then
+        (
+            flock -n 201 || exit 1  # Non-blocking lock, exit if can't acquire
+            if [[ -s "$working_dir/logs/error.log" ]]; then
+                cp "$working_dir/logs/error.log" "$working_dir/logs/error.${timestamp}.log" 2>/dev/null
+                > "$working_dir/logs/error.log"  # Truncate instead of move
+            fi
+            # Keep only last 10 log files
+            ls -t "$working_dir/logs"/error.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+        ) 201>"$working_dir/logs/.error.log.lock" &
+    fi
+}
+
 # Auto-detect common entry files
 auto_detect_entry() {
     local app_dir="$1"
@@ -180,17 +215,8 @@ init_app() {
 
     log_info "Creating service: $service_name"
     
-    # Rotate logs if they exist (backup previous run)
-    if [[ -f "$app_dir/logs/app.log" ]]; then
-        mv "$app_dir/logs/app.log" "$app_dir/logs/app.$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
-        # Keep only last 10 log files
-        ls -t "$app_dir/logs"/app.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-    fi
-    if [[ -f "$app_dir/logs/error.log" ]]; then
-        mv "$app_dir/logs/error.log" "$app_dir/logs/error.$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
-        # Keep only last 10 log files
-        ls -t "$app_dir/logs"/error.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-    fi
+    # Rotate logs asynchronously before starting
+    rotate_logs_async "$app_dir"
     
     # Find Bun executable - check common locations
     local bun_path=""
@@ -627,17 +653,8 @@ start_app() {
     if [[ -f "$service_file" ]]; then
         local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
         
-        # Rotate logs before starting
-        if [[ -f "$working_dir/logs/app.log" ]]; then
-            mv "$working_dir/logs/app.log" "$working_dir/logs/app.$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
-            # Keep only last 10 log files
-            ls -t "$working_dir/logs"/app.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        fi
-        if [[ -f "$working_dir/logs/error.log" ]]; then
-            mv "$working_dir/logs/error.log" "$working_dir/logs/error.$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
-            # Keep only last 10 log files
-            ls -t "$working_dir/logs"/error.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        fi
+        # Rotate logs asynchronously before starting
+        rotate_logs_async "$working_dir"
     fi
 
     sudo systemctl start "$service_name"
@@ -687,17 +704,8 @@ restart_app() {
     if [[ -f "$service_file" ]]; then
         local working_dir=$(grep "^WorkingDirectory=" "$service_file" | sed 's/^WorkingDirectory=//')
         
-        # Rotate logs before restarting
-        if [[ -f "$working_dir/logs/app.log" ]]; then
-            mv "$working_dir/logs/app.log" "$working_dir/logs/app.$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
-            # Keep only last 10 log files
-            ls -t "$working_dir/logs"/app.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        fi
-        if [[ -f "$working_dir/logs/error.log" ]]; then
-            mv "$working_dir/logs/error.log" "$working_dir/logs/error.$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
-            # Keep only last 10 log files
-            ls -t "$working_dir/logs"/error.*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        fi
+        # Rotate logs asynchronously to avoid blocking
+        rotate_logs_async "$working_dir" &
     fi
 
     # Stop the service first
