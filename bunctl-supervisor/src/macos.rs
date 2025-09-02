@@ -5,9 +5,7 @@ use bunctl_core::{
 };
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::common::ProcessRegistry;

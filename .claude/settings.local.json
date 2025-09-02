@@ -9,7 +9,10 @@
       "Bash(RUST_BACKTRACE=1 cargo test test_auto_discovery_bunctl_json -- --nocapture)",
       "Bash(cargo run:*)",
       "Bash(cat:*)",
-      "Bash(cargo clippy:*)"
+      "Bash(cargo clippy:*)",
+      "Bash(rustup target list:*)",
+      "Bash(rustup target add:*)",
+      "Bash(cargo check:*)"
     ],
     "deny": [],
     "ask": []

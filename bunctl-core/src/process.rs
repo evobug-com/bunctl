@@ -262,6 +262,7 @@ impl ProcessBuilder {
 
         #[cfg(unix)]
         {
+            #[allow(unused_imports)]
             use std::os::unix::process::CommandExt;
             if let Some(uid) = self.uid {
                 cmd.uid(uid);
@@ -270,7 +271,7 @@ impl ProcessBuilder {
                 cmd.gid(gid);
             }
         }
-        
+
         #[cfg(not(unix))]
         {
             let _ = self.uid;

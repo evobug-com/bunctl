@@ -15,9 +15,9 @@ impl IpcServer {
         Ok(Self { listener })
     }
 
-    pub async fn accept(&self) -> bunctl_core::Result<(UnixStream, std::net::SocketAddr)> {
-        let (stream, addr) = self.listener.accept().await?;
-        Ok((stream, addr.into()))
+    pub async fn accept(&self) -> bunctl_core::Result<UnixStream> {
+        let (stream, _addr) = self.listener.accept().await?;
+        Ok(stream)
     }
 }
 
@@ -29,7 +29,9 @@ impl IpcClient {
     }
 
     pub async fn send(stream: &mut UnixStream, msg: &IpcMessage) -> bunctl_core::Result<()> {
-        let data = serde_json::to_vec(msg)?;
+        let data = serde_json::to_vec(msg).map_err(|e| {
+            bunctl_core::Error::Other(anyhow::anyhow!("Failed to serialize IPC message: {}", e))
+        })?;
         stream.write_u32(data.len() as u32).await?;
         stream.write_all(&data).await?;
         stream.flush().await?;
@@ -40,6 +42,8 @@ impl IpcClient {
         let len = stream.read_u32().await?;
         let mut buf = vec![0u8; len as usize];
         stream.read_exact(&mut buf).await?;
-        Ok(serde_json::from_slice(&buf)?)
+        serde_json::from_slice(&buf).map_err(|e| {
+            bunctl_core::Error::Other(anyhow::anyhow!("Failed to deserialize IPC response: {}", e))
+        })
     }
 }
