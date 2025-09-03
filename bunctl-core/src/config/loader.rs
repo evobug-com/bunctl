@@ -124,7 +124,6 @@ impl ConfigLoader {
             };
             return Ok(Config {
                 apps: vec![app],
-                daemon: Default::default(),
             });
         }
 
@@ -140,7 +139,6 @@ impl ConfigLoader {
                 .iter()
                 .map(|app| app.to_app_config())
                 .collect(),
-            daemon: Default::default(),
         }
     }
 

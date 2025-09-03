@@ -171,6 +171,7 @@ impl EcosystemApp {
                 multiplier: 2.0,
                 jitter: 0.3,
                 max_attempts: self.max_restarts,
+                exhausted_action: crate::config::ExhaustedAction::default(),
             },
         }
     }

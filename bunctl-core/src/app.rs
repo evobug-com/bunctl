@@ -2,6 +2,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use crate::BackoffStrategy;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AppId(String);
@@ -70,6 +71,7 @@ pub struct App {
     pub start_time: Arc<RwLock<Option<Instant>>>,
     pub restart_count: Arc<RwLock<u32>>,
     pub last_exit_code: Arc<RwLock<Option<i32>>>,
+    pub backoff: Arc<RwLock<Option<BackoffStrategy>>>,
 }
 
 impl App {
@@ -82,6 +84,7 @@ impl App {
             start_time: Arc::new(RwLock::new(None)),
             restart_count: Arc::new(RwLock::new(0)),
             last_exit_code: Arc::new(RwLock::new(None)),
+            backoff: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -101,6 +104,8 @@ impl App {
         *self.pid.write() = pid;
         if pid.is_some() {
             *self.start_time.write() = Some(Instant::now());
+        } else {
+            *self.start_time.write() = None;
         }
     }
 
@@ -114,5 +119,42 @@ impl App {
 
     pub fn reset_restart_count(&self) {
         *self.restart_count.write() = 0;
+    }
+
+    pub fn get_or_create_backoff(&self, config: &crate::AppConfig) -> BackoffStrategy {
+        let mut backoff_lock = self.backoff.write();
+        
+        if let Some(existing_backoff) = &*backoff_lock {
+            existing_backoff.clone()
+        } else {
+            let mut new_backoff = BackoffStrategy::new()
+                .with_base_delay(Duration::from_millis(config.backoff.base_delay_ms))
+                .with_max_delay(Duration::from_millis(config.backoff.max_delay_ms))
+                .with_multiplier(config.backoff.multiplier)
+                .with_jitter(config.backoff.jitter);
+
+            if let Some(max) = config.backoff.max_attempts {
+                new_backoff = new_backoff.with_max_attempts(max);
+            }
+
+            *backoff_lock = Some(new_backoff.clone());
+            new_backoff
+        }
+    }
+
+    pub fn update_backoff(&self, backoff: BackoffStrategy) {
+        *self.backoff.write() = Some(backoff);
+    }
+
+    pub fn reset_backoff(&self) {
+        *self.backoff.write() = None;
+    }
+
+    pub fn is_backoff_exhausted(&self) -> bool {
+        self.backoff
+            .read()
+            .as_ref()
+            .map(|b| b.is_exhausted())
+            .unwrap_or(false)
     }
 }

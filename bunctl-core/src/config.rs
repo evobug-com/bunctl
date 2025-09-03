@@ -14,6 +14,21 @@ use tokio::fs;
 pub use ecosystem::{EcosystemApp, EcosystemConfig};
 pub use loader::ConfigLoader;
 
+/// Get the default socket path based on the platform
+pub fn default_socket_path() -> PathBuf {
+    if cfg!(windows) {
+        // Use named pipe on Windows  
+        PathBuf::from(r"\\.\pipe\bunctl")
+    } else {
+        // Use Unix domain socket on Unix-like systems
+        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+            PathBuf::from(runtime_dir).join("bunctl.sock")
+        } else {
+            PathBuf::from("/tmp/bunctl.sock")
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AppConfig {
     pub name: String,
@@ -77,13 +92,29 @@ pub enum RestartPolicy {
     UnlessStopped,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExhaustedAction {
+    Stop,
+    Remove,
+}
+
+impl Default for ExhaustedAction {
+    fn default() -> Self {
+        Self::Stop
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackoffConfig {
     pub base_delay_ms: u64,
     pub max_delay_ms: u64,
     pub multiplier: f64,
     pub jitter: f64,
     pub max_attempts: Option<u32>,
+    #[serde(default)]
+    pub exhausted_action: ExhaustedAction,
 }
 
 impl Default for BackoffConfig {
@@ -94,11 +125,13 @@ impl Default for BackoffConfig {
             multiplier: 2.0,
             jitter: 0.3,
             max_attempts: None,
+            exhausted_action: ExhaustedAction::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HealthCheck {
     pub check_type: HealthCheckType,
     pub interval: Duration,
@@ -119,13 +152,13 @@ pub enum HealthCheckType {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub apps: Vec<AppConfig>,
-    #[serde(default)]
-    pub daemon: DaemonConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DaemonConfig {
     pub socket_path: PathBuf,
     pub log_level: String,
@@ -136,11 +169,35 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            socket_path: PathBuf::from("/tmp/bunctl.sock"),
+            socket_path: default_socket_path(),
             log_level: "info".to_string(),
             metrics_port: None,
             max_parallel_starts: 4,
         }
+    }
+}
+
+impl DaemonConfig {
+    pub fn is_default(&self) -> bool {
+        let default = Self::default();
+        self.socket_path == default.socket_path
+            && self.log_level == default.log_level
+            && self.metrics_port == default.metrics_port
+            && self.max_parallel_starts == default.max_parallel_starts
+    }
+    
+    pub async fn load_from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let content = fs::read_to_string(path.as_ref()).await?;
+        let config: DaemonConfig = serde_json::from_str(&content)
+            .map_err(|e| crate::Error::Config(format!("Failed to parse daemon config: {}", e)))?;
+        
+        validate_log_level(&config.log_level)
+            .map_err(|e| crate::Error::Config(e))?;
+        
+        validate_daemon_config(&config)
+            .map_err(|e| crate::Error::Config(e))?;
+        
+        Ok(config)
     }
 }
 
@@ -165,9 +222,51 @@ impl ConfigWatcher {
 
     async fn load_config(path: &Path) -> crate::Result<Config> {
         let content = fs::read_to_string(path).await?;
-        let config: Config = serde_json::from_str(&content)
+        let mut config: Config = serde_json::from_str(&content)
             .map_err(|e| crate::Error::Config(format!("Failed to parse config: {}", e)))?;
+        
+        // Validate configuration values
+        Self::validate_config(&mut config)?;
+        
         Ok(config)
+    }
+    
+    fn validate_config(config: &mut Config) -> crate::Result<()> {
+        
+        // Validate each app configuration
+        for app in &config.apps {
+            validate_restart_policy(&app.restart_policy)
+                .map_err(|e| crate::Error::Config(format!("App '{}': {}", app.name, e)))?;
+            
+            validate_exhausted_action(&app.backoff.exhausted_action)
+                .map_err(|e| crate::Error::Config(format!("App '{}': {}", app.name, e)))?;
+            
+            // Validate numeric ranges
+            if let Some(cpu) = app.max_cpu_percent {
+                if cpu <= 0.0 {
+                    return Err(crate::Error::Config(format!(
+                        "App '{}': max_cpu_percent must be greater than 0.0, got {}", 
+                        app.name, cpu
+                    )));
+                }
+            }
+            
+            if app.backoff.multiplier < 1.0 {
+                return Err(crate::Error::Config(format!(
+                    "App '{}': backoff multiplier must be >= 1.0, got {}", 
+                    app.name, app.backoff.multiplier
+                )));
+            }
+            
+            if app.backoff.jitter < 0.0 || app.backoff.jitter > 1.0 {
+                return Err(crate::Error::Config(format!(
+                    "App '{}': backoff jitter must be between 0.0 and 1.0, got {}", 
+                    app.name, app.backoff.jitter
+                )));
+            }
+        }
+        
+        Ok(())
     }
 
     async fn compute_checksum(path: &Path) -> crate::Result<Vec<u8>> {
@@ -196,8 +295,9 @@ impl ConfigWatcher {
     }
 }
 
-// Raw deserialization struct for AppConfig
+// Raw deserialization struct for AppConfig with strict validation
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AppConfigRaw {
     pub name: String,
     pub command: String,
@@ -229,6 +329,48 @@ impl<'de> Deserialize<'de> for AppConfig {
     {
         AppConfigRaw::deserialize(deserializer).map(Into::into)
     }
+}
+
+fn validate_log_level(level: &str) -> Result<(), String> {
+    match level.to_lowercase().as_str() {
+        "error" | "warn" | "info" | "debug" | "trace" => Ok(()),
+        _ => Err(format!("Invalid log_level '{}'. Must be one of: error, warn, info, debug, trace", level))
+    }
+}
+
+fn validate_restart_policy(_policy: &RestartPolicy) -> Result<(), String> {
+    // All enum variants are valid by definition
+    Ok(())
+}
+
+fn validate_exhausted_action(_action: &ExhaustedAction) -> Result<(), String> {
+    // All enum variants are valid by definition  
+    Ok(())
+}
+
+fn validate_daemon_config(daemon: &DaemonConfig) -> Result<(), String> {
+    // Validate max_parallel_starts
+    if daemon.max_parallel_starts == 0 {
+        return Err("max_parallel_starts must be greater than 0".to_string());
+    }
+    
+    if daemon.max_parallel_starts > 100 {
+        return Err("max_parallel_starts must be 100 or less to prevent resource exhaustion".to_string());
+    }
+    
+    // Validate metrics port if specified
+    if let Some(port) = daemon.metrics_port {
+        if port < 1024 {
+            return Err("metrics_port should be >= 1024 to avoid privileged ports".to_string());
+        }
+    }
+    
+    // Validate socket path is not empty
+    if daemon.socket_path.as_os_str().is_empty() {
+        return Err("socket_path cannot be empty".to_string());
+    }
+    
+    Ok(())
 }
 
 impl From<AppConfigRaw> for AppConfig {
