@@ -18,7 +18,11 @@ pub use common::*;
 
 use bunctl_core::{ProcessSupervisor, Result};
 use std::sync::Arc;
+use tracing::debug;
 
 pub async fn create_supervisor() -> Result<Arc<dyn ProcessSupervisor>> {
-    Ok(Arc::new(PlatformSupervisor::new().await?))
+    debug!("Creating platform-specific supervisor");
+    let supervisor = Arc::new(PlatformSupervisor::new().await?);
+    debug!("Supervisor created successfully");
+    Ok(supervisor)
 }

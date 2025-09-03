@@ -144,6 +144,8 @@ impl LinuxSupervisor {
                 pid,
                 app_id: app_id.clone(),
                 inner: None,
+                stdout: None,
+                stderr: None,
             },
         );
 
@@ -186,6 +188,8 @@ impl LinuxSupervisor {
                 pid,
                 app_id: app_id.clone(),
                 inner: None,
+                stdout: None,
+                stderr: None,
             },
         );
 

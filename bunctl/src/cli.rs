@@ -170,16 +170,16 @@ pub struct StatusArgs {
     /// Output as JSON
     #[arg(short, long)]
     pub json: bool,
+
+    /// Watch mode - continuously update status
+    #[arg(short, long)]
+    pub watch: bool,
 }
 
 #[derive(Parser)]
 pub struct LogsArgs {
-    /// Application name
-    pub name: String,
-
-    /// Follow log output
-    #[arg(short, long)]
-    pub follow: bool,
+    /// Application name (optional - shows all apps if not specified)
+    pub name: Option<String>,
 
     /// Number of lines to show
     #[arg(short, long, default_value = "20")]
@@ -188,6 +188,22 @@ pub struct LogsArgs {
     /// Show timestamps
     #[arg(short, long)]
     pub timestamps: bool,
+
+    /// Show errors first, then output (PM2 style)
+    #[arg(long)]
+    pub errors_first: bool,
+
+    /// Disable colored output
+    #[arg(long)]
+    pub no_colors: bool,
+
+    /// Output as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Watch mode - continuously stream new logs in real-time
+    #[arg(short, long)]
+    pub watch: bool,
 }
 
 #[derive(Parser)]
@@ -201,6 +217,7 @@ pub struct DeleteArgs {
 }
 
 #[derive(Parser)]
+#[derive(Debug)]
 pub struct DaemonArgs {
     /// Config file path
     #[arg(short, long)]

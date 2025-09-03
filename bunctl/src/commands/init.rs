@@ -126,7 +126,6 @@ async fn import_from_ecosystem(path: &Path) -> anyhow::Result<()> {
             .iter()
             .map(|app| app.to_app_config())
             .collect(),
-        daemon: Default::default(),
     };
 
     // Write bunctl.json
@@ -149,7 +148,6 @@ async fn import_from_ecosystem(path: &Path) -> anyhow::Result<()> {
 async fn generate_bunctl_config(app: &AppConfig) -> anyhow::Result<()> {
     let config = Config {
         apps: vec![app.clone()],
-        daemon: Default::default(),
     };
 
     let json = serde_json::to_string_pretty(&config)?;

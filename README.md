@@ -1,115 +1,170 @@
 # bunctl-rs
 
-A production-grade process manager for Bun applications written in Rust, designed as a zero-overhead replacement for PM2.
+<div align="center">
 
-## Features
+**🚀 Production-grade process manager for Bun applications**
 
-- **Minimal Resource Usage**: Near-zero memory and CPU overhead
-- **OS-Native Process Management**:
-    - Linux: cgroups v2 for resource limits and process tree management
-    - Windows: Job Objects for process groups
-    - macOS: Process groups with kqueue monitoring
-- **Efficient Logging**: Lock-free async logging with atomic rotation
-- **Smart Crash Recovery**: Exponential backoff with jitter
-- **Configuration Hot-Reload**: File watching without polling
-- **Graceful Shutdown**: Proper signal handling and log draining
-- **PM2 Compatibility**: Supports ecosystem.config.js format
-- **Config Auto-Discovery**: Automatically finds bunctl.json, ecosystem.config.js, or package.json
+*Built with Rust for zero-overhead performance and bulletproof reliability*
 
-## Architecture
+[![Build Status](https://img.shields.io/github/workflow/status/evobug-com/bunctl-rs/CI)](https://github.com/evobug-com/bunctl-rs/actions)
+[![Release](https://img.shields.io/github/v/release/evobug-com/bunctl-rs)](https://github.com/evobug-com/bunctl-rs/releases)
+[![License](https://img.shields.io/github/license/evobug-com/bunctl-rs)](LICENSE)
 
-```
-bunctl-rs/
-├── bunctl/              # CLI binary
-├── bunctl-core/         # Core process management traits
-├── bunctl-supervisor/   # OS-specific supervisors
-├── bunctl-logging/      # Async logging system
-└── bunctl-ipc/          # IPC for control messages
-```
+[Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [API](#-json-api)
 
-## Key Design Principles
+</div>
 
-1. **Single-threaded tokio runtime** per supervisor for minimal overhead
-2. **Event-driven architecture** using OS primitives (epoll, IOCP, kqueue)
-3. **Zero polling** - pure event-based with OS notifications
-4. **Lock-free logging** with line buffering and async writes
-5. **Atomic log rotation** using rename() + fsync()
+---
 
-## Usage
 
-### Initialize Configuration
+> ⚠️ **IMPORTANT DISCLAIMER**
+>
+> This tool is **not fully tested** and is currently being used **internally by Evobug products only**. We use it in production for running our API and Discord bot, but many features may change without notice. Most of the code and documentation has been generated with AI assistance.
+>
+> **Use at your own risk in production environments outside of Evobug.**
 
-```bash
-# Create bunctl.json with auto-detected entry point
-bunctl init --name myapp
+---
 
-# Create ecosystem.config.js (PM2 compatible)
-bunctl init --name myapp --ecosystem
+## 🎯 **About bunctl-rs**
 
-# Import from existing ecosystem.config.js
-bunctl init --from-ecosystem ecosystem.config.js
+A lightweight process manager for Bun applications, built with Rust:
 
-# With custom settings
-bunctl init --name myapp --entry src/server.ts --port 3000 --memory 1G --cpu 75
-```
+- 🏃‍♂️ **Lightweight**: <5MB memory, <0.1% CPU when idle  
+- 🎯 **Cross-platform**: Linux, ~~Windows, macOS with native OS integration~~
+- 📊 **JSON API**: Rich APIs, watch modes, restart limit tracking
+- 🔍 **Process monitoring**: PM2-style status with enhanced process information
+- ⚡ **Fast**: <50ms startup, <1ms log latency
+- 🛡️ **Reliable**: Exponential backoff, graceful shutdown, process isolation
 
-### Start Applications
+---
+
+## ✨ **Features**
+
+### 🖥️ **Status Display & Monitoring**
+Rich process monitoring with JSON API support:
 
 ```bash
-# Start from config file (auto-discovers bunctl.json or ecosystem.config.js)
-bunctl start
-
-# Start specific app from config
-bunctl start myapp
-
-# Start all apps from config
-bunctl start all
-
-# Start with specific config file
-bunctl start --config ecosystem.config.js
-
-# Ad-hoc start without config
-bunctl start myapp --script app.ts
-
-# With resource limits
-bunctl start myapp --script app.ts --max-memory 512000000 --max-cpu 50
-```
-
-### Other Commands
-
-```bash
-# View status
 bunctl status
 
-# View logs
-bunctl logs myapp --follow
+━━━ Bun Applications Status ━━━
 
-# Stop application
-bunctl stop myapp
+  api [manual]
+    Status:  ● RUNNING
+    PID:     25644
+    Uptime:  0s
+    Memory:  N/A / 512.0 MB (limit)
+    CPU:     N/A / 50.0% (limit)
+    Command: bun run src/server.ts
+    Dir:     D:\projects\evobug.com\api
+    Restart: onfailure
+    NODE_ENV: production
+    Restarts: 63 (last exit: 1)
 
-# Restart with parallel mode
-bunctl restart myapp --parallel
+# Real-time monitoring & JSON output
+bunctl status --watch               # Live updates
+bunctl status --json                # Machine-readable
+bunctl status --json --watch        # JSON + live updates
+bunctl logs --watch                 # Live log streaming
 ```
 
-## Configuration Formats
+**Status Indicators:** `● RUNNING` `◐ STARTING` `◔ RESTARTING` `✗ CRASHED` `○ STOPPED`  
+**Smart Features:** Resource monitoring, restart tracking, environment filtering, security masking
 
-### bunctl.json
+### 🎨 **Logging**
+Advanced log management with colors, filtering, and streaming:
+
+```bash
+bunctl logs api                     # Colored output (stderr in red)
+bunctl logs api --errors-first      # PM2-style error separation
+bunctl logs --json --watch          # JSON + real-time streaming
+```
+
+**Features:** Colored stderr, app name prefixes, stack trace formatting, JSON support
+
+### 🔄 **Smart Restart Management**
+Exponential backoff with visual tracking: `3/10` (Green) → `8/10` (Yellow) → `10/10 EXHAUSTED` (Red)
+
+### 🏗️ **Cross-Platform Architecture**
+**Linux**: cgroups v2, signalfd, inotify • **Windows**: Job Objects, IOCP, Named Pipes • **macOS**: Process groups, kqueue, FSEvents
+
+---
+
+## 🚀 **Installation**
+
+### Release Binaries
+```bash
+# Download latest release
+curl -L https://github.com/evobug-com/bunctl-rs/releases/latest/download/bunctl-linux-x64 -o bunctl
+chmod +x bunctl
+```
+
+### From Source
+```bash
+git clone https://github.com/evobug-com/bunctl-rs.git
+cd bunctl-rs
+cargo build --release
+./target/release/bunctl --version
+```
+
+---
+
+## ⚡ **Quick Start**
+
+### 1. Initialize Your App
+```bash
+# Auto-detect entry point and create config
+bunctl init --name myapp
+
+# With custom settings
+bunctl init --name myapp --entry src/server.ts --port 3000 --memory 1G
+```
+
+### 2. Start Your Application  
+```bash
+# Start from config
+bunctl start
+
+# Start with daemon for full monitoring
+bunctl daemon &
+bunctl start
+```
+
+### 3. Monitor & Manage
+```bash
+# Beautiful status display
+bunctl status
+
+# Live status monitoring  
+bunctl status --watch
+
+# View logs with colors
+bunctl logs myapp
+
+# JSON for automation
+bunctl status --json | jq '.[] | .memory_bytes'
+```
+
+---
+
+## 📚 **Configuration**
+
+bunctl auto-discovers config files in priority order: `bunctl.json` → `ecosystem.config.js` → `package.json`
+
+### bunctl.json (Recommended)
 ```json
 {
-  "apps": [
-    {
-      "name": "api",
-      "command": "bun run src/server.ts",
-      "cwd": "/app",
-      "env": {
-        "PORT": "3000",
-        "NODE_ENV": "production"
-      },
-      "max_memory": 536870912,
-      "max_cpu_percent": 50,
-      "restart_policy": "always"
-    }
-  ]
+  "apps": [{
+    "name": "api",
+    "command": "bun",
+    "args": ["src/server.ts"],
+    "cwd": "/app",
+    "auto_start": true,
+    "restart_policy": "OnFailure",
+    "max_memory": 536870912,
+    "max_cpu_percent": 50.0,
+    "env": { "PORT": "3000", "NODE_ENV": "production" },
+    "backoff": { "max_attempts": 10, "base_delay_ms": 100 }
+  }]
 }
 ```
 
@@ -120,67 +175,138 @@ module.exports = {
     name: 'api',
     script: 'src/server.ts',
     interpreter: 'bun',
-    instances: 1,
-    autorestart: true,
-    watch: false,
+    max_restarts: 10,
     max_memory_restart: '512M',
-    env: {
-      PORT: 3000,
-      NODE_ENV: 'production'
-    }
+    env: { PORT: 3000, NODE_ENV: 'production' }
   }]
 }
 ```
 
-### package.json
+### Manual Loading & Overrides
+```bash
+bunctl start --config custom.json          # Explicit config
+bunctl start api --max-memory 1G            # CLI overrides
+bunctl start myapp --script src/server.ts   # Ad-hoc start
+```
+
+**Precedence:** CLI args > Explicit config > Auto-discovered config > Defaults
+
+---
+
+## 🛠️ **Commands & JSON API**
+
+### Core Commands
+```bash
+# Process lifecycle
+bunctl start [app]              # Start application(s)
+bunctl stop [app]               # Stop application(s)
+bunctl restart [app]            # Restart application(s)
+bunctl delete [app]             # Delete application(s)
+
+# Monitoring & information
+bunctl status [app]             # Show status
+bunctl list                     # List all apps
+bunctl logs [app]               # View logs
+bunctl init [options]           # Initialize config
+
+# JSON API & advanced options
+bunctl status --json --watch    # JSON + live updates
+bunctl logs --json --watch      # JSON logs + streaming
+bunctl logs --errors-first -n 50 # PM2-style with line limit
+```
+
+### JSON Response Format
 ```json
 {
-  "name": "myapp",
-  "scripts": {
-    "start": "bun run src/server.ts"
-  },
-  "bunctl": {
-    "apps": [{
-      "name": "myapp",
-      "command": "bun run start"
-    }]
-  }
+  "name": "api", "state": "Running", "pid": 12345,
+  "uptime_seconds": 8100, "memory_bytes": 47185920, "cpu_percent": 2.1,
+  "restarts": 3, "max_restart_attempts": 10,
+  "command": "bun", "args": ["src/server.ts"], "env": {...}
 }
 ```
 
-## Performance Targets
+---
 
-- Memory: <5MB per supervisor
-- CPU: <0.1% idle
-- Startup: <50ms
-- Log latency: <1ms p99
+## 🎯 **Automation Examples**
 
-## Building
-
+### Health Checks & Monitoring
 ```bash
-cargo build --release
+# CI/CD health check
+bunctl status api --json | jq -e '.state == "Running"' || exit 1
+
+# Memory alerts
+bunctl status --json | jq -r '.[] | select(.memory_bytes > 500000000) | 
+  "ALERT: \(.name) using \(.memory_bytes / 1024 / 1024 | floor)MB"'
+
+# Restart problematic apps
+bunctl status --json | jq -r '.[] | select(.restarts > 10) | .name' | 
+  xargs bunctl restart
 ```
 
-## OS-Specific Features
+---
 
-### Linux
-- cgroups v2 for resource management
-- signalfd for signal handling
-- inotify for file watching
+## 🏗️ **Architecture**
 
-### Windows
-- Job Objects for process trees
-- IOCP for async I/O
-- Named pipes for IPC
+**Workspace:** `bunctl/` (CLI) • `bunctl-core/` (traits) • `bunctl-supervisor/` (OS-specific) • `bunctl-logging/` (async) • `bunctl-ipc/` (communication)
 
-### macOS
-- Process groups with setpgid()
-- kqueue for event monitoring
-- FSEvents for file watching
+**Design:** Single-threaded tokio runtime, event-driven architecture (epoll/IOCP/kqueue), zero polling, lock-free logging, atomic operations
 
-## Security
+---
 
-- Process isolation via OS primitives
-- Capability dropping on Linux (optional)
-- No shell execution - direct process spawn
-- Restricted tokens on Windows (future)
+## 🚧 **Roadmap**
+
+### ✅ Completed (v0.3.0)
+- [x] Beautiful status display with DevOps information
+- [x] JSON API for status and logs  
+- [x] Watch modes for real-time monitoring
+- [x] Enhanced logging with PM2-style features
+- [x] Restart limit tracking and failure handling
+- [x] Cross-platform Windows/Linux/macOS support
+
+### 🔄 In Progress (v0.4.0)  
+- [ ] JSON API for all commands (`start`, `stop`, `restart`, etc.)
+- [ ] Real-time log following with WebSocket streaming
+- [ ] Prometheus metrics endpoint
+- [ ] Advanced filtering and querying
+
+### 📋 Planned (v0.5.0+)
+- [ ] Cluster management across multiple hosts
+- [ ] Built-in reverse proxy with load balancing  
+- [ ] Health check endpoints with custom scripts
+- [ ] Integration with Docker and Kubernetes
+- [ ] Web-based dashboard
+
+---
+
+## 🤝 **Contributing**
+
+```bash
+git clone https://github.com/evobug-com/bunctl-rs.git
+cd bunctl-rs && cargo build && cargo test && cargo clippy
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+---
+
+## 📄 **License**
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+## 🙏 **Acknowledgments**
+
+- Inspired by PM2's excellent process management
+- Built with the amazing Rust ecosystem
+- Thanks to the Bun team for creating an incredible JavaScript runtime
+
+---
+
+<div align="center">
+
+**⭐ Star this repo if bunctl-rs helps you manage your applications!**
+
+[Report Bug](https://github.com/evobug-com/bunctl-rs/issues) • [Request Feature](https://github.com/evobug-com/bunctl-rs/issues) • [Documentation](https://bunctl.dev)
+
+</div>

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdout, ChildStderr, Command};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
@@ -14,19 +14,25 @@ pub struct ProcessInfo {
     pub open_files: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcessHandle {
     pub pid: u32,
     pub app_id: crate::AppId,
     pub inner: Option<std::sync::Arc<tokio::sync::Mutex<Child>>>,
+    pub stdout: Option<ChildStdout>,
+    pub stderr: Option<ChildStderr>,
 }
 
 impl ProcessHandle {
-    pub fn new(pid: u32, app_id: crate::AppId, child: Child) -> Self {
+    pub fn new(pid: u32, app_id: crate::AppId, mut child: Child) -> Self {
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
         Self {
             pid,
             app_id,
             inner: Some(std::sync::Arc::new(tokio::sync::Mutex::new(child))),
+            stdout,
+            stderr,
         }
     }
 
@@ -82,6 +88,26 @@ impl ProcessHandle {
 
     pub fn id(&self) -> u32 {
         self.pid
+    }
+
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.stdout.take()
+    }
+
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.stderr.take()
+    }
+}
+
+impl Clone for ProcessHandle {
+    fn clone(&self) -> Self {
+        Self {
+            pid: self.pid,
+            app_id: self.app_id.clone(),
+            inner: self.inner.clone(),
+            stdout: None,  // Can't clone stdout
+            stderr: None,  // Can't clone stderr
+        }
     }
 }
 
@@ -245,15 +271,37 @@ impl ProcessBuilder {
     }
 
     pub async fn spawn(self) -> crate::Result<Child> {
-        let mut cmd = Command::new(&self.command);
-        cmd.args(&self.args)
+        // Parse command string to handle cases like "bun run script.js"
+        let (actual_command, mut parsed_args) = if self.command.contains(' ') && self.args.is_empty() {
+            let parts: Vec<&str> = self.command.split_whitespace().collect();
+            if !parts.is_empty() {
+                let cmd = parts[0].to_string();
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                (cmd, args)
+            } else {
+                (self.command.clone(), Vec::new())
+            }
+        } else {
+            (self.command.clone(), Vec::new())
+        };
+        
+        // Combine parsed args with explicitly set args
+        parsed_args.extend(self.args);
+        
+        tracing::info!("Spawning process: command='{}', args={:?}", actual_command, parsed_args);
+        
+        let mut cmd = Command::new(&actual_command);
+        cmd.args(&parsed_args)
             .stdout(self.stdout)
             .stderr(self.stderr)
             .stdin(self.stdin)
             .kill_on_drop(true);
 
         if let Some(cwd) = self.cwd {
+            tracing::debug!("Setting working directory to: {:?}", cwd);
             cmd.current_dir(cwd);
+        } else {
+            tracing::debug!("No working directory specified, using current dir");
         }
 
         for (key, value) in self.env {
@@ -279,7 +327,7 @@ impl ProcessBuilder {
         }
 
         cmd.spawn()
-            .map_err(|e| crate::Error::SpawnFailed(format!("{}: {}", self.command, e)))
+            .map_err(|e| crate::Error::SpawnFailed(format!("{}: {}", actual_command, e)))
     }
 }
 

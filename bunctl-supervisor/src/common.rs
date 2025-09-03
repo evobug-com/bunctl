@@ -39,6 +39,8 @@ impl ProcessRegistry {
             pid: h.pid,
             app_id: h.app_id.clone(),
             inner: None,
+            stdout: None,
+            stderr: None,
         })
     }
 
