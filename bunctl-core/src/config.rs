@@ -17,7 +17,7 @@ pub use loader::ConfigLoader;
 /// Get the default socket path based on the platform
 pub fn default_socket_path() -> PathBuf {
     if cfg!(windows) {
-        // Use named pipe on Windows  
+        // Use named pipe on Windows
         PathBuf::from(r"\\.\pipe\bunctl")
     } else {
         // Use Unix domain socket on Unix-like systems
@@ -185,18 +185,16 @@ impl DaemonConfig {
             && self.metrics_port == default.metrics_port
             && self.max_parallel_starts == default.max_parallel_starts
     }
-    
+
     pub async fn load_from_file(path: impl AsRef<Path>) -> crate::Result<Self> {
         let content = fs::read_to_string(path.as_ref()).await?;
         let config: DaemonConfig = serde_json::from_str(&content)
             .map_err(|e| crate::Error::Config(format!("Failed to parse daemon config: {}", e)))?;
-        
-        validate_log_level(&config.log_level)
-            .map_err(|e| crate::Error::Config(e))?;
-        
-        validate_daemon_config(&config)
-            .map_err(|e| crate::Error::Config(e))?;
-        
+
+        validate_log_level(&config.log_level).map_err(|e| crate::Error::Config(e))?;
+
+        validate_daemon_config(&config).map_err(|e| crate::Error::Config(e))?;
+
         Ok(config)
     }
 }
@@ -224,48 +222,47 @@ impl ConfigWatcher {
         let content = fs::read_to_string(path).await?;
         let mut config: Config = serde_json::from_str(&content)
             .map_err(|e| crate::Error::Config(format!("Failed to parse config: {}", e)))?;
-        
+
         // Validate configuration values
         Self::validate_config(&mut config)?;
-        
+
         Ok(config)
     }
-    
+
     fn validate_config(config: &mut Config) -> crate::Result<()> {
-        
         // Validate each app configuration
         for app in &config.apps {
             validate_restart_policy(&app.restart_policy)
                 .map_err(|e| crate::Error::Config(format!("App '{}': {}", app.name, e)))?;
-            
+
             validate_exhausted_action(&app.backoff.exhausted_action)
                 .map_err(|e| crate::Error::Config(format!("App '{}': {}", app.name, e)))?;
-            
+
             // Validate numeric ranges
             if let Some(cpu) = app.max_cpu_percent {
                 if cpu <= 0.0 {
                     return Err(crate::Error::Config(format!(
-                        "App '{}': max_cpu_percent must be greater than 0.0, got {}", 
+                        "App '{}': max_cpu_percent must be greater than 0.0, got {}",
                         app.name, cpu
                     )));
                 }
             }
-            
+
             if app.backoff.multiplier < 1.0 {
                 return Err(crate::Error::Config(format!(
-                    "App '{}': backoff multiplier must be >= 1.0, got {}", 
+                    "App '{}': backoff multiplier must be >= 1.0, got {}",
                     app.name, app.backoff.multiplier
                 )));
             }
-            
+
             if app.backoff.jitter < 0.0 || app.backoff.jitter > 1.0 {
                 return Err(crate::Error::Config(format!(
-                    "App '{}': backoff jitter must be between 0.0 and 1.0, got {}", 
+                    "App '{}': backoff jitter must be between 0.0 and 1.0, got {}",
                     app.name, app.backoff.jitter
                 )));
             }
         }
-        
+
         Ok(())
     }
 
@@ -334,7 +331,10 @@ impl<'de> Deserialize<'de> for AppConfig {
 fn validate_log_level(level: &str) -> Result<(), String> {
     match level.to_lowercase().as_str() {
         "error" | "warn" | "info" | "debug" | "trace" => Ok(()),
-        _ => Err(format!("Invalid log_level '{}'. Must be one of: error, warn, info, debug, trace", level))
+        _ => Err(format!(
+            "Invalid log_level '{}'. Must be one of: error, warn, info, debug, trace",
+            level
+        )),
     }
 }
 
@@ -344,7 +344,7 @@ fn validate_restart_policy(_policy: &RestartPolicy) -> Result<(), String> {
 }
 
 fn validate_exhausted_action(_action: &ExhaustedAction) -> Result<(), String> {
-    // All enum variants are valid by definition  
+    // All enum variants are valid by definition
     Ok(())
 }
 
@@ -353,23 +353,25 @@ fn validate_daemon_config(daemon: &DaemonConfig) -> Result<(), String> {
     if daemon.max_parallel_starts == 0 {
         return Err("max_parallel_starts must be greater than 0".to_string());
     }
-    
+
     if daemon.max_parallel_starts > 100 {
-        return Err("max_parallel_starts must be 100 or less to prevent resource exhaustion".to_string());
+        return Err(
+            "max_parallel_starts must be 100 or less to prevent resource exhaustion".to_string(),
+        );
     }
-    
+
     // Validate metrics port if specified
     if let Some(port) = daemon.metrics_port {
         if port < 1024 {
             return Err("metrics_port should be >= 1024 to avoid privileged ports".to_string());
         }
     }
-    
+
     // Validate socket path is not empty
     if daemon.socket_path.as_os_str().is_empty() {
         return Err("socket_path cannot be empty".to_string());
     }
-    
+
     Ok(())
 }
 

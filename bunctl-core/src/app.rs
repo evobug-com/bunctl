@@ -1,8 +1,8 @@
+use crate::BackoffStrategy;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crate::BackoffStrategy;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AppId(String);
@@ -123,7 +123,7 @@ impl App {
 
     pub fn get_or_create_backoff(&self, config: &crate::AppConfig) -> BackoffStrategy {
         let mut backoff_lock = self.backoff.write();
-        
+
         if let Some(existing_backoff) = &*backoff_lock {
             existing_backoff.clone()
         } else {
