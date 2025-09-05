@@ -19,13 +19,14 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
         {
             println!("━━━ Starting Bun Applications ━━━");
             println!();
-            
+
             for app in config.apps {
-                println!("  {} [{}]", 
+                println!(
+                    "  {} [{}]",
                     app.name,
                     match app.restart_policy {
                         bunctl_core::config::RestartPolicy::Always => "auto",
-                        bunctl_core::config::RestartPolicy::OnFailure => "onfailure", 
+                        bunctl_core::config::RestartPolicy::OnFailure => "onfailure",
                         bunctl_core::config::RestartPolicy::UnlessStopped => "unless-stopped",
                         bunctl_core::config::RestartPolicy::No => "manual",
                     }
@@ -38,7 +39,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
                 if let Some(cpu) = app.max_cpu_percent {
                     println!("    CPU:     {}% (limit)", cpu);
                 }
-                
+
                 // Show key environment variables
                 let important_env_vars = ["NODE_ENV", "PORT", "DATABASE_URL"];
                 for env_var in &important_env_vars {
@@ -51,7 +52,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
                         println!("    {}: {}", env_var, display_value);
                     }
                 }
-                
+
                 print!("    Status:  ");
                 match send_to_daemon(app).await {
                     Ok(_) => println!("● STARTING"),
@@ -111,12 +112,13 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
 
     println!("━━━ Starting Bun Application ━━━");
     println!();
-    
-    println!("  {} [{}]", 
+
+    println!(
+        "  {} [{}]",
         app_id,
         match config.restart_policy {
             bunctl_core::config::RestartPolicy::Always => "auto",
-            bunctl_core::config::RestartPolicy::OnFailure => "onfailure", 
+            bunctl_core::config::RestartPolicy::OnFailure => "onfailure",
             bunctl_core::config::RestartPolicy::UnlessStopped => "unless-stopped",
             bunctl_core::config::RestartPolicy::No => "manual",
         }
@@ -129,7 +131,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
     if let Some(cpu) = config.max_cpu_percent {
         println!("    CPU:     {}% (limit)", cpu);
     }
-    
+
     // Show key environment variables
     let important_env_vars = ["NODE_ENV", "PORT", "DATABASE_URL"];
     for env_var in &important_env_vars {
@@ -142,7 +144,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
             println!("    {}: {}", env_var, display_value);
         }
     }
-    
+
     print!("    Status:  ");
     match send_to_daemon(config).await {
         Ok(_) => println!("● STARTING"),
@@ -151,7 +153,7 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
             return Err(e);
         }
     }
-    
+
     Ok(())
 }
 
@@ -181,17 +183,19 @@ async fn start_from_config(config_path: &Path, app_name: Option<String>) -> anyh
         return Err(anyhow::anyhow!("No matching apps found"));
     }
 
-    println!("━━━ Starting Bun Application{} ━━━", 
+    println!(
+        "━━━ Starting Bun Application{} ━━━",
         if apps_to_start.len() == 1 { "" } else { "s" }
     );
     println!();
-    
+
     for app in apps_to_start {
-        println!("  {} [{}]", 
+        println!(
+            "  {} [{}]",
             app.name,
             match app.restart_policy {
                 bunctl_core::config::RestartPolicy::Always => "auto",
-                bunctl_core::config::RestartPolicy::OnFailure => "onfailure", 
+                bunctl_core::config::RestartPolicy::OnFailure => "onfailure",
                 bunctl_core::config::RestartPolicy::UnlessStopped => "unless-stopped",
                 bunctl_core::config::RestartPolicy::No => "manual",
             }
@@ -204,7 +208,7 @@ async fn start_from_config(config_path: &Path, app_name: Option<String>) -> anyh
         if let Some(cpu) = app.max_cpu_percent {
             println!("    CPU:     {}% (limit)", cpu);
         }
-        
+
         // Show key environment variables
         let important_env_vars = ["NODE_ENV", "PORT", "DATABASE_URL"];
         for env_var in &important_env_vars {
@@ -217,7 +221,7 @@ async fn start_from_config(config_path: &Path, app_name: Option<String>) -> anyh
                 println!("    {}: {}", env_var, display_value);
             }
         }
-        
+
         print!("    Status:  ");
         match send_to_daemon(app).await {
             Ok(_) => println!("● STARTING"),
@@ -234,7 +238,7 @@ async fn start_from_config(config_path: &Path, app_name: Option<String>) -> anyh
 
 async fn send_to_daemon(config: AppConfig) -> anyhow::Result<()> {
     let socket_path = get_socket_path();
-    
+
     // Try to connect to existing daemon
     let mut client = match IpcClient::connect(&socket_path).await {
         Ok(client) => client,
@@ -242,7 +246,7 @@ async fn send_to_daemon(config: AppConfig) -> anyhow::Result<()> {
             // Daemon not running, start it
             println!("🔧 Starting daemon...");
             start_daemon().await?;
-            
+
             // Wait for daemon to be ready, with retries
             print!("⏳ Waiting for daemon to initialize");
             let mut retry_count = 0;
@@ -250,33 +254,36 @@ async fn send_to_daemon(config: AppConfig) -> anyhow::Result<()> {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 print!(".");
                 std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-                
+
                 match IpcClient::connect(&socket_path).await {
                     Ok(client) => {
                         println!(" ✅");
                         break client;
-                    },
+                    }
                     Err(_) if retry_count < 10 => {
                         retry_count += 1;
                         continue;
                     }
                     Err(e) => {
                         println!(" ❌");
-                        return Err(anyhow::anyhow!("Failed to connect to daemon after starting: {}", e));
+                        return Err(anyhow::anyhow!(
+                            "Failed to connect to daemon after starting: {}",
+                            e
+                        ));
                     }
                 }
             }
         }
     };
-    
+
     let config_json = serde_json::to_string(&config)?;
     let msg = IpcMessage::Start {
         name: config.name.clone(),
         config: config_json,
     };
-    
+
     client.send(&msg).await?;
-    
+
     match client.recv().await? {
         IpcResponse::Success { message: _ } => Ok(()),
         IpcResponse::Error { message } => Err(anyhow::anyhow!(message)),
@@ -290,9 +297,9 @@ fn get_socket_path() -> PathBuf {
 
 async fn start_daemon() -> anyhow::Result<()> {
     use std::process::Command;
-    
+
     let exe = std::env::current_exe()?;
-    
+
     #[cfg(windows)]
     {
         // Use Windows-specific process creation to detach the daemon
@@ -300,7 +307,7 @@ async fn start_daemon() -> anyhow::Result<()> {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         Command::new(&exe)
             .arg("daemon")
             .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW)
@@ -309,7 +316,7 @@ async fn start_daemon() -> anyhow::Result<()> {
             .stderr(std::process::Stdio::null())
             .spawn()?;
     }
-    
+
     #[cfg(unix)]
     {
         Command::new(&exe)
@@ -319,9 +326,9 @@ async fn start_daemon() -> anyhow::Result<()> {
             .stderr(std::process::Stdio::null())
             .spawn()?;
     }
-    
+
     // Wait longer for daemon to initialize
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    
+
     Ok(())
 }

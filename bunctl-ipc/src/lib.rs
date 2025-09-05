@@ -1,12 +1,12 @@
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub use unix::{IpcClient, IpcServer, IpcConnection};
+pub use unix::{IpcClient, IpcConnection, IpcServer};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{IpcClient, IpcServer, IpcConnection};
+pub use windows::{IpcClient, IpcConnection, IpcServer};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,8 +32,17 @@ pub enum IpcMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcResponse {
-    Success { message: String },
-    Error { message: String },
-    Data { data: serde_json::Value },
-    Event { event_type: String, data: serde_json::Value },
+    Success {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
+    Data {
+        data: serde_json::Value,
+    },
+    Event {
+        event_type: String,
+        data: serde_json::Value,
+    },
 }

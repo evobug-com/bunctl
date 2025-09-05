@@ -68,9 +68,7 @@ fn test_config_serialization() {
         },
     };
 
-    let config = Config {
-        apps: vec![app],
-    };
+    let config = Config { apps: vec![app] };
 
     let json = serde_json::to_string_pretty(&config).unwrap();
     let deserialized: Config = serde_json::from_str(&json).unwrap();
@@ -108,9 +106,7 @@ fn test_unix_specific_config() {
 
 #[test]
 fn test_empty_config() {
-    let config = Config {
-        apps: vec![],
-    };
+    let config = Config { apps: vec![] };
 
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: Config = serde_json::from_str(&json).unwrap();
@@ -132,10 +128,16 @@ fn test_daemon_config_rejects_unknown_fields() {
     }"#;
 
     let result: Result<DaemonConfig, _> = serde_json::from_str(invalid_daemon_json);
-    assert!(result.is_err(), "DaemonConfig should fail with unknown daemon fields");
-    
+    assert!(
+        result.is_err(),
+        "DaemonConfig should fail with unknown daemon fields"
+    );
+
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("unknown field"), "Error should mention unknown field");
+    assert!(
+        error_msg.contains("unknown field"),
+        "Error should mention unknown field"
+    );
 }
 
 #[test]
@@ -150,8 +152,11 @@ fn test_daemon_config_accepts_valid_fields() {
     }"#;
 
     let result: Result<DaemonConfig, _> = serde_json::from_str(valid_daemon_json);
-    assert!(result.is_ok(), "DaemonConfig should accept valid daemon fields");
-    
+    assert!(
+        result.is_ok(),
+        "DaemonConfig should accept valid daemon fields"
+    );
+
     let config = result.unwrap();
     assert_eq!(config.socket_path.to_string_lossy(), "/tmp/custom.sock");
     assert_eq!(config.log_level, "debug");
@@ -175,7 +180,10 @@ async fn test_daemon_config_validation() {
     let path = std::env::temp_dir().join("test_daemon_validation.json");
     std::fs::write(&path, &json).unwrap();
     let daemon_result = DaemonConfig::load_from_file(&path).await;
-    assert!(daemon_result.is_err(), "Should reject max_parallel_starts = 0");
+    assert!(
+        daemon_result.is_err(),
+        "Should reject max_parallel_starts = 0"
+    );
     std::fs::remove_file(&path).ok();
 
     // Test invalid max_parallel_starts (too high)
@@ -189,7 +197,10 @@ async fn test_daemon_config_validation() {
     let path = std::env::temp_dir().join("test_daemon_validation_high.json");
     std::fs::write(&path, &json).unwrap();
     let daemon_result = DaemonConfig::load_from_file(&path).await;
-    assert!(daemon_result.is_err(), "Should reject max_parallel_starts > 100");
+    assert!(
+        daemon_result.is_err(),
+        "Should reject max_parallel_starts > 100"
+    );
     std::fs::remove_file(&path).ok();
 
     // Test invalid metrics port (privileged)
@@ -209,16 +220,17 @@ async fn test_daemon_config_validation() {
 
 #[test]
 fn test_app_config_no_daemon_section() {
-    let config = Config {
-        apps: vec![],
-    };
+    let config = Config { apps: vec![] };
 
     let json = serde_json::to_string(&config).unwrap();
-    
+
     // App configs should never contain daemon section
-    assert!(!json.contains("daemon"), "App config should not contain daemon section");
+    assert!(
+        !json.contains("daemon"),
+        "App config should not contain daemon section"
+    );
     assert_eq!(json, r#"{"apps":[]}"#);
-    
+
     // Should still deserialize properly
     let deserialized: Config = serde_json::from_str(&json).unwrap();
     assert!(deserialized.apps.is_empty());

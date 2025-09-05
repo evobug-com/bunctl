@@ -3,65 +3,77 @@ mod commands;
 mod daemon;
 
 use clap::Parser;
+use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
-use tracing::{info, error};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
-    
+
     // For daemon mode, write logs to file instead of console
     let is_daemon = matches!(cli.command, cli::Command::Daemon(_));
-    
+
     // Initialize console subscriber for profiling if enabled
     #[cfg(feature = "console")]
     let use_console = std::env::var("TOKIO_CONSOLE").is_ok();
     #[cfg(not(feature = "console"))]
     let use_console = false;
-    
+
     if use_console {
         #[cfg(feature = "console")]
         {
             console_subscriber::init();
-            return daemon::run(cli::DaemonArgs { config: None, socket: None }).await;
+            return daemon::run(cli::DaemonArgs {
+                config: None,
+                socket: None,
+            })
+            .await;
         }
     }
-    
+
     // Set default log level for daemon mode
     if is_daemon && std::env::var("RUST_LOG").is_err() {
-        let default_level = std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-        unsafe { std::env::set_var("RUST_LOG", default_level); }
+        let default_level =
+            std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        unsafe {
+            std::env::set_var("RUST_LOG", default_level);
+        }
     }
-    
+
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        let default_level = std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let default_level =
+            std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
         EnvFilter::new(&default_level)
     });
-    
+
     // Check if we want to force console logging for daemon (for debugging)
     let force_console = std::env::var("BUNCTL_CONSOLE_LOG").is_ok();
-    
+
     if is_daemon && !force_console {
         // Create log directory if it doesn't exist
         let log_dir = if cfg!(windows) {
-            std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string()))
-                .join("bunctl")
-                .join("logs")
+            std::path::PathBuf::from(
+                std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string()),
+            )
+            .join("bunctl")
+            .join("logs")
         } else {
             std::path::PathBuf::from("/var/log/bunctl")
         };
-        
+
         if let Err(e) = std::fs::create_dir_all(&log_dir) {
             eprintln!("Failed to create log directory {:?}: {}", log_dir, e);
             std::process::exit(1);
         }
-        
+
         let file_appender = tracing_appender::rolling::never(&log_dir, "daemon.log");
         tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_subscriber::fmt::layer()
-                .with_writer(file_appender)
-                .with_ansi(false))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(file_appender)
+                    .with_ansi(false),
+            )
             .init();
     } else {
         tracing_subscriber::registry()
@@ -69,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
             .with(tracing_subscriber::fmt::layer())
             .init();
     }
-    
+
     let result = match cli.command {
         cli::Command::Init(args) => commands::init::execute(args).await,
         cli::Command::Start(args) => commands::start::execute(args).await,

@@ -13,9 +13,6 @@ pub use process::{ExitStatus, ProcessBuilder, ProcessHandle, ProcessInfo, Signal
 pub use supervisor::{ProcessSupervisor, SupervisorEvent};
 
 #[cfg(test)]
-mod backoff_exhaustion_test;
-
-#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -30,31 +30,49 @@ impl WindowsSupervisor {
 
     async fn spawn_process(&self, config: &AppConfig) -> Result<ProcessHandle> {
         let app_id = AppId::new(&config.name)?;
-        debug!("Spawning process for app: {} with command: {} {:?}", app_id, config.command, config.args);
-        
+        debug!(
+            "Spawning process for app: {} with command: {} {:?}",
+            app_id, config.command, config.args
+        );
+
         let mut builder = bunctl_core::process::ProcessBuilder::new(&config.command);
-        
+
         // Start with the config environment variables
         let mut env_vars = config.env.clone();
-        
+
         // Add important environment variables from the current process
-        let important_env_vars = ["RUST_LOG", "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"];
+        let important_env_vars = [
+            "RUST_LOG",
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ];
         for env_var in &important_env_vars {
             if let Ok(value) = std::env::var(env_var) {
                 // Only add if not already set in config
                 if !env_vars.contains_key(*env_var) {
                     env_vars.insert(env_var.to_string(), value);
-                    debug!("Inherited environment variable {}: {}", env_var, env_vars.get(*env_var).unwrap_or(&"<empty>".to_string()));
+                    debug!(
+                        "Inherited environment variable {}: {}",
+                        env_var,
+                        env_vars.get(*env_var).unwrap_or(&"<empty>".to_string())
+                    );
                 }
             }
         }
-        
+
         builder = builder
             .args(&config.args)
             .current_dir(&config.cwd)
             .envs(&env_vars);
 
-        debug!("Process builder configured - cwd: {:?}, env vars: {} (including inherited)", config.cwd, env_vars.len());
+        debug!(
+            "Process builder configured - cwd: {:?}, env vars: {} (including inherited)",
+            config.cwd,
+            env_vars.len()
+        );
 
         if let Some(uid) = config.uid {
             builder = builder.uid(uid);
@@ -67,20 +85,23 @@ impl WindowsSupervisor {
 
         // CRITICAL FIX: Redirect stdout/stderr to log files instead of using pipes
         let log_dir = if cfg!(windows) {
-            std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string()))
-                .join("bunctl").join("logs")
+            std::path::PathBuf::from(
+                std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string()),
+            )
+            .join("bunctl")
+            .join("logs")
         } else {
             std::path::PathBuf::from("/var/log/bunctl")
         };
-        
+
         // Ensure log directory exists
         if let Err(e) = std::fs::create_dir_all(&log_dir) {
             debug!("Failed to create log directory {:?}: {}", log_dir, e);
         }
-        
+
         let stdout_path = log_dir.join(format!("{}-out.log", app_id));
         let stderr_path = log_dir.join(format!("{}-err.log", app_id));
-        
+
         use std::process::Stdio;
         let stdout_file = std::fs::OpenOptions::new()
             .create(true)
@@ -90,7 +111,7 @@ impl WindowsSupervisor {
                 error!("Failed to open stdout log file {:?}: {}", stdout_path, e);
                 bunctl_core::Error::Io(e)
             })?;
-            
+
         let stderr_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -99,12 +120,15 @@ impl WindowsSupervisor {
                 error!("Failed to open stderr log file {:?}: {}", stderr_path, e);
                 bunctl_core::Error::Io(e)
             })?;
-        
+
         builder = builder
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
-            
-        debug!("Configured output redirection: stdout -> {:?}, stderr -> {:?}", stdout_path, stderr_path);
+
+        debug!(
+            "Configured output redirection: stdout -> {:?}, stderr -> {:?}",
+            stdout_path, stderr_path
+        );
 
         debug!("Spawning child process for app: {}", app_id);
         let child = builder.spawn().await.map_err(|e| {
@@ -112,21 +136,36 @@ impl WindowsSupervisor {
             e
         })?;
         let pid = child.id().unwrap();
-        debug!("Child process spawned successfully for app: {} with PID: {}", app_id, pid);
+        debug!(
+            "Child process spawned successfully for app: {} with PID: {}",
+            app_id, pid
+        );
 
         let handle = ProcessHandle::new(pid, app_id.clone(), child);
-        
+
         // Register a clone for internal tracking (stdout/stderr will be None in clone)
-        debug!("Registering process handle for app: {} in process registry", app_id);
+        debug!(
+            "Registering process handle for app: {} in process registry",
+            app_id
+        );
         self.registry.register(app_id.clone(), handle.clone());
 
-        debug!("Sending ProcessStarted event for app: {} PID: {}", app_id, pid);
+        debug!(
+            "Sending ProcessStarted event for app: {} PID: {}",
+            app_id, pid
+        );
         if let Err(e) = self
             .event_tx
-            .send(SupervisorEvent::ProcessStarted { app: app_id.clone(), pid })
-            .await 
+            .send(SupervisorEvent::ProcessStarted {
+                app: app_id.clone(),
+                pid,
+            })
+            .await
         {
-            warn!("Failed to send ProcessStarted event for app {}: {}", app_id, e);
+            warn!(
+                "Failed to send ProcessStarted event for app {}: {}",
+                app_id, e
+            );
         } else {
             trace!("ProcessStarted event sent successfully for app: {}", app_id);
         }

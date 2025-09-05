@@ -1,6 +1,5 @@
 use bunctl_core::{
-    App, AppConfig, AppId, AppState, ConfigWatcher, ProcessSupervisor,
-    SupervisorEvent,
+    App, AppConfig, AppId, AppState, ConfigWatcher, ProcessSupervisor, SupervisorEvent,
 };
 use bunctl_ipc::{IpcConnection, IpcMessage, IpcResponse, IpcServer, SubscriptionType};
 use bunctl_logging::{LogConfig, LogManager};
@@ -27,20 +26,34 @@ struct Subscriber {
 impl Subscriber {
     fn should_receive_event(&self, event_type: &str, app_name: &Option<AppId>) -> bool {
         match &self.subscription {
-            SubscriptionType::AllEvents { app_name: filter } => {
-                filter.as_ref().map(|f| app_name.as_ref().map(|a| a.to_string()) == Some(f.clone())).unwrap_or(true)
-            }
+            SubscriptionType::AllEvents { app_name: filter } => filter
+                .as_ref()
+                .map(|f| app_name.as_ref().map(|a| a.to_string()) == Some(f.clone()))
+                .unwrap_or(true),
             SubscriptionType::StatusEvents { app_name: filter } => {
-                if !matches!(event_type, "status_change" | "process_started" | "process_exited" | "process_crashed" | "process_restarting") {
+                if !matches!(
+                    event_type,
+                    "status_change"
+                        | "process_started"
+                        | "process_exited"
+                        | "process_crashed"
+                        | "process_restarting"
+                ) {
                     return false;
                 }
-                filter.as_ref().map(|f| app_name.as_ref().map(|a| a.to_string()) == Some(f.clone())).unwrap_or(true)
+                filter
+                    .as_ref()
+                    .map(|f| app_name.as_ref().map(|a| a.to_string()) == Some(f.clone()))
+                    .unwrap_or(true)
             }
             SubscriptionType::LogEvents { app_name: filter } => {
                 if event_type != "log_line" {
                     return false;
                 }
-                filter.as_ref().map(|f| app_name.as_ref().map(|a| a.to_string()) == Some(f.clone())).unwrap_or(true)
+                filter
+                    .as_ref()
+                    .map(|f| app_name.as_ref().map(|a| a.to_string()) == Some(f.clone()))
+                    .unwrap_or(true)
             }
         }
     }
@@ -94,23 +107,28 @@ impl AppStatus {
             memory_bytes: None,
             cpu_percent: None,
         };
-        
+
         // Add key environment variables
         for (key, value) in &config.env {
-            if key.starts_with("PORT") || key.starts_with("NODE_ENV") || 
-               key.starts_with("DATABASE") || key.starts_with("REDIS") ||
-               key.contains("URL") || key.contains("HOST") {
+            if key.starts_with("PORT")
+                || key.starts_with("NODE_ENV")
+                || key.starts_with("DATABASE")
+                || key.starts_with("REDIS")
+                || key.contains("URL")
+                || key.contains("HOST")
+            {
                 status.env.insert(key.clone(), value.clone());
             }
         }
-        
+
         // Add process info if running
         if let Some(pid) = app.get_pid()
-            && let Ok(process_info) = supervisor.get_process_info(pid).await {
-                status.memory_bytes = process_info.memory_bytes;
-                status.cpu_percent = process_info.cpu_percent.map(|f| f as f64);
-            }
-        
+            && let Ok(process_info) = supervisor.get_process_info(pid).await
+        {
+            status.memory_bytes = process_info.memory_bytes;
+            status.cpu_percent = process_info.cpu_percent.map(|f| f as f64);
+        }
+
         status
     }
 }
@@ -140,17 +158,18 @@ impl Daemon {
             event_type: event_type.to_string(),
             data,
         };
-        
+
         // Remove disconnected subscribers while broadcasting
         let mut to_remove = Vec::new();
-        
+
         for subscriber in subscribers.iter() {
             if subscriber.should_receive_event(event_type, &app_name.cloned())
-                && subscriber.sender.send(event_response.clone()).is_err() {
-                    to_remove.push(subscriber.id);
-                }
+                && subscriber.sender.send(event_response.clone()).is_err()
+            {
+                to_remove.push(subscriber.id);
+            }
         }
-        
+
         // Clean up disconnected subscribers
         for id in to_remove {
             subscribers.remove(&id);
@@ -225,7 +244,10 @@ impl Daemon {
 
         if let Some(ref watcher) = self.config_watcher {
             let config = watcher.get();
-            debug!("Found {} apps in config for auto-start evaluation", config.apps.len());
+            debug!(
+                "Found {} apps in config for auto-start evaluation",
+                config.apps.len()
+            );
             for app_config in &config.apps {
                 if app_config.auto_start {
                     debug!("Auto-starting app: {}", app_config.name);
@@ -241,7 +263,7 @@ impl Daemon {
         let mut events = self.supervisor.events();
         let _config_check_interval = time::interval(Duration::from_secs(5));
         let _health_check_interval = time::interval(Duration::from_secs(30));
-        
+
         debug!("Event loop initialized with intervals - config check: 5s, health check: 30s");
 
         // IPC server ENABLED temporarily to reproduce issue
@@ -252,7 +274,7 @@ impl Daemon {
             let log_manager = self.log_manager.clone();
             let subscribers = self.subscribers.clone();
             let next_subscriber_id = self.next_subscriber_id.clone();
-            
+
             tokio::spawn(async move {
                 debug!("IPC server task started, waiting for connections");
                 loop {
@@ -264,10 +286,18 @@ impl Daemon {
                             let log_manager = log_manager.clone();
                             let subscribers = subscribers.clone();
                             let next_subscriber_id = next_subscriber_id.clone();
-                            
+
                             tokio::spawn(async move {
                                 debug!("Spawning connection handler task");
-                                Self::handle_ipc_connection(connection, apps, supervisor, log_manager, subscribers, next_subscriber_id).await;
+                                Self::handle_ipc_connection(
+                                    connection,
+                                    apps,
+                                    supervisor,
+                                    log_manager,
+                                    subscribers,
+                                    next_subscriber_id,
+                                )
+                                .await;
                                 debug!("Connection handler task completed");
                             });
                         }
@@ -312,7 +342,10 @@ impl Daemon {
 
     async fn start_app(&self, config: AppConfig) -> anyhow::Result<()> {
         let app_id = AppId::new(&config.name)?;
-        debug!("Starting app: {} with command: {} {:?}", app_id, config.command, config.args);
+        debug!(
+            "Starting app: {} with command: {} {:?}",
+            app_id, config.command, config.args
+        );
 
         if self.apps.contains_key(&app_id) {
             warn!("App {} is already managed", app_id);
@@ -323,7 +356,11 @@ impl Daemon {
         debug!("Creating new app instance for: {}", app_id);
         let app = Arc::new(App::new(app_id.clone(), config.clone()));
         self.apps.insert(app_id.clone(), app.clone());
-        debug!("App {} added to registry, total apps: {}", app_id, self.apps.len());
+        debug!(
+            "App {} added to registry, total apps: {}",
+            app_id,
+            self.apps.len()
+        );
 
         debug!("Setting app {} state to Starting", app_id);
         app.set_state(AppState::Starting);
@@ -331,8 +368,11 @@ impl Daemon {
         debug!("Spawning process for app: {}", app_id);
         let handle = self.supervisor.spawn(&config).await?;
         let pid = handle.pid;
-        debug!("Process spawned successfully for app: {} with PID: {}", app_id, pid);
-        
+        debug!(
+            "Process spawned successfully for app: {} with PID: {}",
+            app_id, pid
+        );
+
         app.set_pid(Some(pid));
         app.set_state(AppState::Running);
         debug!("App {} state set to Running", app_id);
@@ -345,7 +385,14 @@ impl Daemon {
         let subscribers = self.subscribers.clone();
 
         debug!("Setting up monitoring for app: {}", app_id);
-        Self::monitor_app_with_subscribers(app_clone, handle, supervisor, log_manager, subscribers, self.apps.clone());
+        Self::monitor_app_with_subscribers(
+            app_clone,
+            handle,
+            supervisor,
+            log_manager,
+            subscribers,
+            self.apps.clone(),
+        );
         debug!("App {} monitoring setup completed", app_id);
 
         Ok(())
@@ -360,26 +407,43 @@ impl Daemon {
         apps: Arc<DashMap<AppId, Arc<App>>>,
     ) {
         debug!("monitor_app_with_subscribers starting for app: {}", app.id);
-        
+
         // NEW APPROACH: Output should be redirected at spawn time, not captured here
-        debug!("Using OS-level redirection instead of capture tasks for app: {}", app.id);
-        
+        debug!(
+            "Using OS-level redirection instead of capture tasks for app: {}",
+            app.id
+        );
+
         // These should be None if redirection was configured properly at spawn
         let stdout = handle.take_stdout();
         let stderr = handle.take_stderr();
-        
+
         if stdout.is_some() || stderr.is_some() {
-            debug!("WARNING: app {} still has stdout/stderr pipes - redirection not configured", app.id);
+            debug!(
+                "WARNING: app {} still has stdout/stderr pipes - redirection not configured",
+                app.id
+            );
         } else {
-            debug!("SUCCESS: app {} has no pipes - output is redirected to files", app.id);
+            debug!(
+                "SUCCESS: app {} has no pipes - output is redirected to files",
+                app.id
+            );
         }
-        
+
         let subscribers = subscribers.clone();
         let app_id = app.id.clone(); // Fix: was missing this line
         debug!("Spawning main monitoring task for app: {}", app_id);
         tokio::spawn(async move {
             debug!("monitor_app_impl task started for app: {}", app.id);
-            Self::monitor_app_impl(app.clone(), handle, supervisor, log_manager, subscribers, apps).await;
+            Self::monitor_app_impl(
+                app.clone(),
+                handle,
+                supervisor,
+                log_manager,
+                subscribers,
+                apps,
+            )
+            .await;
             debug!("monitor_app_impl task completed for app: {}", app.id);
         });
     }
@@ -395,7 +459,7 @@ impl Daemon {
         let stderr = handle.take_stderr();
         let app_id = app.id.clone();
         let log_manager_clone = log_manager.clone();
-        
+
         // Spawn tasks to capture output (without event broadcasting)
         if let Some(stdout) = stdout {
             let app_id = app_id.clone();
@@ -404,7 +468,7 @@ impl Daemon {
                 Self::capture_output_simple(stdout, app_id, log_manager, "stdout").await;
             });
         }
-        
+
         if let Some(stderr) = stderr {
             let app_id = app_id.clone();
             let log_manager = log_manager_clone.clone();
@@ -412,25 +476,28 @@ impl Daemon {
                 Self::capture_output_simple(stderr, app_id, log_manager, "stderr").await;
             });
         }
-        
+
         // Spawn task to reset backoff after stable runtime
         let app_for_backoff_reset = app.clone();
         tokio::spawn(async move {
             // Wait for 10 seconds of stable runtime
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            
+
             // Check if process is still running after 10 seconds
             if matches!(app_for_backoff_reset.get_state(), AppState::Running) {
                 app_for_backoff_reset.reset_backoff();
-                info!("Reset backoff for app {} after 10 seconds of stable runtime", app_for_backoff_reset.id);
+                info!(
+                    "Reset backoff for app {} after 10 seconds of stable runtime",
+                    app_for_backoff_reset.id
+                );
             }
         });
-        
+
         tokio::spawn(async move {
             Self::monitor_app_impl_simple(app, handle, supervisor, log_manager).await;
         });
     }
-    
+
     async fn capture_output<R>(
         reader: R,
         app_id: AppId,
@@ -441,10 +508,10 @@ impl Daemon {
         R: tokio::io::AsyncRead + Unpin,
     {
         use tokio::io::{AsyncBufReadExt, BufReader};
-        
+
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
-        
+
         let writer = match log_manager.get_writer(&app_id).await {
             Ok(w) => w,
             Err(e) => {
@@ -452,7 +519,7 @@ impl Daemon {
                 return;
             }
         };
-        
+
         loop {
             line.clear();
             match reader.read_line(&mut line).await {
@@ -460,14 +527,17 @@ impl Daemon {
                 Ok(_) => {
                     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
                     let trimmed_line = line.trim_end();
-                    
+
                     // Skip completely empty lines to reduce noise
                     if !trimmed_line.is_empty() {
-                        let log_line = format!("[{}] [{}] [{}] {}", app_id, timestamp, stream_type, trimmed_line);
+                        let log_line = format!(
+                            "[{}] [{}] [{}] {}",
+                            app_id, timestamp, stream_type, trimmed_line
+                        );
                         if let Err(e) = writer.write_line(&log_line) {
                             error!("Failed to write log for {}: {}", app_id, e);
                         }
-                        
+
                         // Broadcast log event to subscribers
                         let event_response = IpcResponse::Event {
                             event_type: "log_line".to_string(),
@@ -478,16 +548,17 @@ impl Daemon {
                                 "timestamp": timestamp.to_string()
                             }),
                         };
-                        
+
                         // Remove disconnected subscribers while broadcasting
                         let mut to_remove = Vec::new();
                         for subscriber in subscribers.iter() {
                             if subscriber.should_receive_event("log_line", &Some(app_id.clone()))
-                                && subscriber.sender.send(event_response.clone()).is_err() {
-                                    to_remove.push(subscriber.id);
-                                }
+                                && subscriber.sender.send(event_response.clone()).is_err()
+                            {
+                                to_remove.push(subscriber.id);
+                            }
                         }
-                        
+
                         // Clean up disconnected subscribers
                         for id in to_remove {
                             subscribers.remove(&id);
@@ -511,10 +582,10 @@ impl Daemon {
         R: tokio::io::AsyncRead + Unpin,
     {
         use tokio::io::{AsyncBufReadExt, BufReader};
-        
+
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
-        
+
         let writer = match log_manager.get_writer(&app_id).await {
             Ok(w) => w,
             Err(e) => {
@@ -522,16 +593,14 @@ impl Daemon {
                 return;
             }
         };
-        
+
         loop {
             line.clear();
-            
+
             // Add timeout to prevent infinite loops on broken pipes
-            let read_result = tokio::time::timeout(
-                Duration::from_secs(5), 
-                reader.read_line(&mut line)
-            ).await;
-            
+            let read_result =
+                tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line)).await;
+
             match read_result {
                 Ok(Ok(0)) => {
                     debug!("EOF reached for {} stream of {}", stream_type, app_id);
@@ -540,10 +609,13 @@ impl Daemon {
                 Ok(Ok(_)) => {
                     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
                     let trimmed_line = line.trim_end();
-                    
+
                     // Skip completely empty lines to reduce noise
                     if !trimmed_line.is_empty() {
-                        let log_line = format!("[{}] [{}] [{}] {}", app_id, timestamp, stream_type, trimmed_line);
+                        let log_line = format!(
+                            "[{}] [{}] [{}] {}",
+                            app_id, timestamp, stream_type, trimmed_line
+                        );
                         if let Err(e) = writer.write_line(&log_line) {
                             error!("Failed to write log for {}: {}", app_id, e);
                         }
@@ -554,7 +626,10 @@ impl Daemon {
                     break;
                 }
                 Err(_) => {
-                    debug!("Timeout reading {} from {} - terminating capture task", stream_type, app_id);
+                    debug!(
+                        "Timeout reading {} from {} - terminating capture task",
+                        stream_type, app_id
+                    );
                     break;
                 }
             }
@@ -569,15 +644,24 @@ impl Daemon {
         subscribers: Arc<DashMap<u64, Subscriber>>,
         apps: Arc<DashMap<AppId, Arc<App>>>,
     ) {
-        debug!("monitor_app_impl waiting for process to exit for app: {}", app.id);
+        debug!(
+            "monitor_app_impl waiting for process to exit for app: {}",
+            app.id
+        );
         let status = match handle.wait().await {
             Ok(status) => {
-                debug!("Process for app {} exited with status: {:?}", app.id, status);
+                debug!(
+                    "Process for app {} exited with status: {:?}",
+                    app.id, status
+                );
                 status
             }
             Err(e) => {
                 error!("Failed to wait for app {}: {}", app.id, e);
-                debug!("Returning early from monitor_app_impl due to wait error for app: {}", app.id);
+                debug!(
+                    "Returning early from monitor_app_impl due to wait error for app: {}",
+                    app.id
+                );
                 return;
             }
         };
@@ -586,7 +670,7 @@ impl Daemon {
         *app.last_exit_code.write() = status.code();
         app.set_pid(None);
         debug!("Cleared PID for app: {}", app.id);
-        
+
         // Broadcast process exited event
         Self::broadcast_event_static(
             &subscribers,
@@ -601,7 +685,7 @@ impl Daemon {
         let config = app.config.read().clone();
         if status.should_restart(config.restart_policy) {
             app.set_state(AppState::Crashed);
-            
+
             // Broadcast crashed state
             Self::broadcast_event_static(
                 &subscribers,
@@ -615,14 +699,19 @@ impl Daemon {
 
             // Get the persistent backoff strategy (or create a new one if this is the first crash)
             let mut backoff = app.get_or_create_backoff(&config);
-            
-            info!("App {} backoff state: attempt={}, exhausted={}", app.id, backoff.attempt(), backoff.is_exhausted());
+
+            info!(
+                "App {} backoff state: attempt={}, exhausted={}",
+                app.id,
+                backoff.attempt(),
+                backoff.is_exhausted()
+            );
 
             // Check if backoff is already exhausted before entering the loop
             if backoff.is_exhausted() {
                 warn!("Backoff already exhausted for app {}", app.id);
                 app.set_state(AppState::Stopped);
-                
+
                 // Broadcast backoff exhausted event
                 Self::broadcast_event_static(
                     &subscribers,
@@ -642,10 +731,10 @@ impl Daemon {
                     attempt,
                     next_retry: std::time::Instant::now() + delay,
                 });
-                
+
                 // Update the persistent backoff state
                 app.update_backoff(backoff.clone());
-                
+
                 // Broadcast restarting event
                 Self::broadcast_event_static(
                     &subscribers,
@@ -661,7 +750,7 @@ impl Daemon {
                 tokio::time::sleep(delay).await;
 
                 app.set_state(AppState::Starting);
-                
+
                 // Broadcast starting state
                 Self::broadcast_event_static(
                     &subscribers,
@@ -679,7 +768,7 @@ impl Daemon {
                         app.set_state(AppState::Running);
                         app.increment_restart_count();
                         info!("Restarted app {} with PID {}", app.id, pid);
-                        
+
                         // Broadcast process started event
                         Self::broadcast_event_static(
                             &subscribers,
@@ -690,7 +779,7 @@ impl Daemon {
                                 "pid": pid
                             }),
                         );
-                        
+
                         // Broadcast running state
                         Self::broadcast_event_static(
                             &subscribers,
@@ -726,15 +815,15 @@ impl Daemon {
             }
 
             warn!("Backoff exhausted for app {}", app.id);
-            
+
             // Clean up log writer to prevent resource leak
             log_manager.remove_writer(&app.id).await;
-            
+
             // Handle exhausted action based on configuration
             match config.backoff.exhausted_action {
                 bunctl_core::config::ExhaustedAction::Stop => {
                     app.set_state(AppState::Stopped);
-                    
+
                     // Broadcast backoff exhausted event
                     Self::broadcast_event_static(
                         &subscribers,
@@ -748,7 +837,7 @@ impl Daemon {
                 }
                 bunctl_core::config::ExhaustedAction::Remove => {
                     app.set_state(AppState::Stopped);
-                    
+
                     // Broadcast app removal event
                     Self::broadcast_event_static(
                         &subscribers,
@@ -760,18 +849,21 @@ impl Daemon {
                             "reason": "backoff_exhausted"
                         }),
                     );
-                    
+
                     // Remove app from registry
                     apps.remove(&app.id);
-                    info!("App {} removed from registry due to backoff exhaustion", app.id);
+                    info!(
+                        "App {} removed from registry due to backoff exhaustion",
+                        app.id
+                    );
                 }
             }
         } else {
             app.set_state(AppState::Stopped);
-            
+
             // Clean up log writer when app stops
             log_manager.remove_writer(&app.id).await;
-            
+
             // Broadcast stopped state
             Self::broadcast_event_static(
                 &subscribers,
@@ -808,7 +900,7 @@ impl Daemon {
 
             // Get or create persistent backoff strategy from the app
             let mut backoff = app.get_or_create_backoff(&config);
-            
+
             // Check if backoff is already exhausted before entering the loop
             if backoff.is_exhausted() {
                 warn!("Backoff already exhausted for app {}", app.id);
@@ -860,12 +952,12 @@ impl Daemon {
 
             warn!("Backoff exhausted for app {}", app.id);
             app.set_state(AppState::Stopped);
-            
+
             // Clean up log writer to prevent resource leak
             log_manager.remove_writer(&app.id).await;
         } else {
             app.set_state(AppState::Stopped);
-            
+
             // Clean up log writer when app stops
             log_manager.remove_writer(&app.id).await;
         }
@@ -889,7 +981,11 @@ impl Daemon {
             }
             SupervisorEvent::ProcessExited { app, status } => {
                 info!("Process {} exited with status {:?}", app, status);
-                debug!("Broadcasting process_exited event for app: {}, exit_code: {:?}", app, status.code());
+                debug!(
+                    "Broadcasting process_exited event for app: {}, exit_code: {:?}",
+                    app,
+                    status.code()
+                );
                 self.broadcast_event(
                     "process_exited",
                     Some(&app),
@@ -902,7 +998,10 @@ impl Daemon {
             }
             SupervisorEvent::ProcessCrashed { app, reason } => {
                 error!("Process {} crashed: {}", app, reason);
-                debug!("Broadcasting process_crashed event for app: {}, reason: {}", app, reason);
+                debug!(
+                    "Broadcasting process_crashed event for app: {}, reason: {}",
+                    app, reason
+                );
                 self.broadcast_event(
                     "process_crashed",
                     Some(&app),
@@ -1063,7 +1162,7 @@ impl Daemon {
     ) {
         let mut subscriber_id: Option<u64> = None;
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<IpcResponse>();
-        
+
         loop {
             tokio::select! {
                 msg_result = connection.recv() => {
@@ -1075,17 +1174,17 @@ impl Daemon {
                                     if let Some(id) = subscriber_id {
                                         subscribers.remove(&id);
                                     }
-                                    
+
                                     let id = next_subscriber_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                     let subscriber = Subscriber {
                                         id,
                                         subscription,
                                         sender: event_tx.clone(),
                                     };
-                                    
+
                                     subscribers.insert(id, subscriber);
                                     subscriber_id = Some(id);
-                                    
+
                                     let response = IpcResponse::Success {
                                         message: "Subscribed to events".to_string(),
                                     };
@@ -1098,7 +1197,7 @@ impl Daemon {
                                         subscribers.remove(&id);
                                         subscriber_id = None;
                                     }
-                                    
+
                                     let response = IpcResponse::Success {
                                         message: "Unsubscribed from events".to_string(),
                                     };
@@ -1125,7 +1224,7 @@ impl Daemon {
                         }
                     }
                 }
-                
+
                 Some(event) = event_rx.recv() => {
                     // Forward event to the client
                     if let Err(_) = connection.send(&event).await {
@@ -1134,7 +1233,7 @@ impl Daemon {
                 }
             }
         }
-        
+
         // Clean up subscriber when connection is lost
         if let Some(id) = subscriber_id {
             subscribers.remove(&id);
@@ -1152,7 +1251,14 @@ impl Daemon {
             IpcMessage::Start { name, config } => {
                 match serde_json::from_str::<AppConfig>(&config) {
                     Ok(app_config) => {
-                        match Self::start_app_static(apps, supervisor, app_config, Some(subscribers.clone())).await {
+                        match Self::start_app_static(
+                            apps,
+                            supervisor,
+                            app_config,
+                            Some(subscribers.clone()),
+                        )
+                        .await
+                        {
                             Ok(_) => IpcResponse::Success {
                                 message: format!("Started app {}", name),
                             },
@@ -1166,54 +1272,57 @@ impl Daemon {
                     },
                 }
             }
-            IpcMessage::Stop { name } => {
-                match AppId::new(&name) {
-                    Ok(app_id) => {
-                        if let Some(app) = apps.get(&app_id) {
-                            if let Some(pid) = app.get_pid() {
-                                app.set_state(AppState::Stopping);
-                                let handle = bunctl_core::ProcessHandle {
-                                    pid,
-                                    app_id: app_id.clone(),
-                                    inner: None,
-                                    stdout: None,
-                                    stderr: None,
-                                };
-                                let stop_timeout = app.config.read().stop_timeout;
-                                match supervisor.graceful_stop(&mut handle.clone(), stop_timeout).await {
-                                    Ok(_) => {
-                                        app.set_state(AppState::Stopped);
-                                        IpcResponse::Success {
-                                            message: format!("Stopped app {}", name),
-                                        }
+            IpcMessage::Stop { name } => match AppId::new(&name) {
+                Ok(app_id) => {
+                    if let Some(app) = apps.get(&app_id) {
+                        if let Some(pid) = app.get_pid() {
+                            app.set_state(AppState::Stopping);
+                            let handle = bunctl_core::ProcessHandle {
+                                pid,
+                                app_id: app_id.clone(),
+                                inner: None,
+                                stdout: None,
+                                stderr: None,
+                            };
+                            let stop_timeout = app.config.read().stop_timeout;
+                            match supervisor
+                                .graceful_stop(&mut handle.clone(), stop_timeout)
+                                .await
+                            {
+                                Ok(_) => {
+                                    app.set_state(AppState::Stopped);
+                                    IpcResponse::Success {
+                                        message: format!("Stopped app {}", name),
                                     }
-                                    Err(e) => IpcResponse::Error {
-                                        message: format!("Failed to stop app {}: {}", name, e),
-                                    },
                                 }
-                            } else {
-                                IpcResponse::Error {
-                                    message: format!("App {} is not running", name),
-                                }
+                                Err(e) => IpcResponse::Error {
+                                    message: format!("Failed to stop app {}: {}", name, e),
+                                },
                             }
                         } else {
                             IpcResponse::Error {
-                                message: format!("App {} not found", name),
+                                message: format!("App {} is not running", name),
                             }
                         }
+                    } else {
+                        IpcResponse::Error {
+                            message: format!("App {} not found", name),
+                        }
                     }
-                    Err(e) => IpcResponse::Error {
-                        message: format!("Invalid app name: {}", e),
-                    },
                 }
-            }
+                Err(e) => IpcResponse::Error {
+                    message: format!("Invalid app name: {}", e),
+                },
+            },
             IpcMessage::Status { name } => {
                 let status = if let Some(name) = name {
                     match AppId::new(&name) {
                         Ok(app_id) => {
                             if let Some(app) = apps.get(&app_id) {
                                 let config = app.config.read().clone();
-                                let app_status = AppStatus::from_app_and_supervisor(&app, &config, supervisor).await;
+                                let app_status =
+                                    AppStatus::from_app_and_supervisor(&app, &config, supervisor)
+                                        .await;
                                 serde_json::to_value(app_status).unwrap()
                             } else {
                                 return IpcResponse::Error {
@@ -1229,10 +1338,11 @@ impl Daemon {
                     }
                 } else {
                     let mut all_status = Vec::new();
-                    
+
                     for entry in apps.iter() {
                         let config = entry.config.read().clone();
-                        let app_status = AppStatus::from_app_and_supervisor(&entry, &config, supervisor).await;
+                        let app_status =
+                            AppStatus::from_app_and_supervisor(&entry, &config, supervisor).await;
                         all_status.push(serde_json::to_value(app_status).unwrap());
                     }
                     serde_json::json!(all_status)
@@ -1255,8 +1365,11 @@ impl Daemon {
                                 };
                                 let stop_timeout = app.config.read().stop_timeout;
                                 let config = app.config.read().clone();
-                                
-                                match supervisor.graceful_stop(&mut handle.clone(), stop_timeout).await {
+
+                                match supervisor
+                                    .graceful_stop(&mut handle.clone(), stop_timeout)
+                                    .await
+                                {
                                     Ok(_) => {
                                         app.set_state(AppState::Stopped);
                                         // Now restart it
@@ -1268,11 +1381,17 @@ impl Daemon {
                                                 app.set_state(AppState::Running);
                                                 app.increment_restart_count();
                                                 IpcResponse::Success {
-                                                    message: format!("Restarted app {} with PID {}", name, pid),
+                                                    message: format!(
+                                                        "Restarted app {} with PID {}",
+                                                        name, pid
+                                                    ),
                                                 }
                                             }
                                             Err(e) => IpcResponse::Error {
-                                                message: format!("Failed to restart app {}: {}", name, e),
+                                                message: format!(
+                                                    "Failed to restart app {}: {}",
+                                                    name, e
+                                                ),
                                             },
                                         }
                                     }
@@ -1290,7 +1409,10 @@ impl Daemon {
                                         app.set_pid(Some(pid));
                                         app.set_state(AppState::Running);
                                         IpcResponse::Success {
-                                            message: format!("Started app {} with PID {}", name, pid),
+                                            message: format!(
+                                                "Started app {} with PID {}",
+                                                name, pid
+                                            ),
                                         }
                                     }
                                     Err(e) => IpcResponse::Error {
@@ -1330,7 +1452,9 @@ impl Daemon {
                                     stderr: None,
                                 };
                                 let stop_timeout = app.config.read().stop_timeout;
-                                let _ = supervisor.graceful_stop(&mut handle.clone(), stop_timeout).await;
+                                let _ = supervisor
+                                    .graceful_stop(&mut handle.clone(), stop_timeout)
+                                    .await;
                             }
                             IpcResponse::Success {
                                 message: format!("Deleted app {}", name),
@@ -1354,15 +1478,13 @@ impl Daemon {
                             if apps.contains_key(&app_id) {
                                 // Try to read structured logs from the log manager
                                 match log_manager.read_structured_logs(&app_id, lines).await {
-                                    Ok(structured_logs) => {
-                                        IpcResponse::Data {
-                                            data: serde_json::json!({
-                                                "type": "single",
-                                                "app": name,
-                                                "logs": structured_logs
-                                            }),
-                                        }
-                                    }
+                                    Ok(structured_logs) => IpcResponse::Data {
+                                        data: serde_json::json!({
+                                            "type": "single",
+                                            "app": name,
+                                            "logs": structured_logs
+                                        }),
+                                    },
                                     Err(e) => {
                                         tracing::debug!("Failed to read logs for {}: {}", name, e);
                                         IpcResponse::Data {
@@ -1390,14 +1512,12 @@ impl Daemon {
                 } else {
                     // All apps logs
                     match log_manager.read_all_apps_logs(lines).await {
-                        Ok(all_logs) => {
-                            IpcResponse::Data {
-                                data: serde_json::json!({
-                                    "type": "all",
-                                    "apps": all_logs
-                                }),
-                            }
-                        }
+                        Ok(all_logs) => IpcResponse::Data {
+                            data: serde_json::json!({
+                                "type": "all",
+                                "apps": all_logs
+                            }),
+                        },
                         Err(e) => {
                             tracing::debug!("Failed to read all logs: {}", e);
                             IpcResponse::Data {
@@ -1474,11 +1594,18 @@ impl Daemon {
         let log_manager_clone = log_manager.clone();
 
         if let Some(subscribers) = subscribers {
-            Self::monitor_app_with_subscribers(app_clone, handle, supervisor_clone, log_manager_clone, subscribers, apps.clone());
+            Self::monitor_app_with_subscribers(
+                app_clone,
+                handle,
+                supervisor_clone,
+                log_manager_clone,
+                subscribers,
+                apps.clone(),
+            );
         } else {
             Self::monitor_app(app_clone, handle, supervisor_clone, log_manager_clone);
         }
-        
+
         Ok(())
     }
 

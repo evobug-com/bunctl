@@ -216,8 +216,7 @@ pub struct DeleteArgs {
     pub force: bool,
 }
 
-#[derive(Parser)]
-#[derive(Debug)]
+#[derive(Parser, Debug)]
 pub struct DaemonArgs {
     /// Config file path
     #[arg(short, long)]

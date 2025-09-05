@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
-use tokio::process::{Child, ChildStdout, ChildStderr, Command};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
@@ -105,8 +105,8 @@ impl Clone for ProcessHandle {
             pid: self.pid,
             app_id: self.app_id.clone(),
             inner: self.inner.clone(),
-            stdout: None,  // Can't clone stdout
-            stderr: None,  // Can't clone stderr
+            stdout: None, // Can't clone stdout
+            stderr: None, // Can't clone stderr
         }
     }
 }
@@ -272,24 +272,29 @@ impl ProcessBuilder {
 
     pub async fn spawn(self) -> crate::Result<Child> {
         // Parse command string to handle cases like "bun run script.js"
-        let (actual_command, mut parsed_args) = if self.command.contains(' ') && self.args.is_empty() {
-            let parts: Vec<&str> = self.command.split_whitespace().collect();
-            if !parts.is_empty() {
-                let cmd = parts[0].to_string();
-                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                (cmd, args)
+        let (actual_command, mut parsed_args) =
+            if self.command.contains(' ') && self.args.is_empty() {
+                let parts: Vec<&str> = self.command.split_whitespace().collect();
+                if !parts.is_empty() {
+                    let cmd = parts[0].to_string();
+                    let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                    (cmd, args)
+                } else {
+                    (self.command.clone(), Vec::new())
+                }
             } else {
                 (self.command.clone(), Vec::new())
-            }
-        } else {
-            (self.command.clone(), Vec::new())
-        };
-        
+            };
+
         // Combine parsed args with explicitly set args
         parsed_args.extend(self.args);
-        
-        tracing::info!("Spawning process: command='{}', args={:?}", actual_command, parsed_args);
-        
+
+        tracing::info!(
+            "Spawning process: command='{}', args={:?}",
+            actual_command,
+            parsed_args
+        );
+
         let mut cmd = Command::new(&actual_command);
         cmd.args(&parsed_args)
             .stdout(self.stdout)

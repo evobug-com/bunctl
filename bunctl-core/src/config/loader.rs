@@ -122,9 +122,7 @@ impl ConfigLoader {
                 args: vec!["run".to_string(), "start".to_string()],
                 ..Default::default()
             };
-            return Ok(Config {
-                apps: vec![app],
-            });
+            return Ok(Config { apps: vec![app] });
         }
 
         Err(crate::Error::Config(

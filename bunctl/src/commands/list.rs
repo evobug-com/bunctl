@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 pub async fn execute() -> anyhow::Result<()> {
     let socket_path = get_socket_path();
-    
+
     let mut client = match IpcClient::connect(&socket_path).await {
         Ok(client) => client,
         Err(_) => {
@@ -11,11 +11,11 @@ pub async fn execute() -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    
+
     let msg = IpcMessage::List;
-    
+
     client.send(&msg).await?;
-    
+
     match client.recv().await? {
         IpcResponse::Data { data } => {
             if let Some(apps) = data.as_array() {
