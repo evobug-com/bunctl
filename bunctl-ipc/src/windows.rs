@@ -29,6 +29,7 @@ impl IpcServer {
 
         let server = ServerOptions::new()
             .first_pipe_instance(true)
+            .max_instances(254) // Windows allows up to 254 concurrent connections
             .create(&pipe_name)
             .map_err(|e| {
                 error!("Failed to create named pipe {}: {}", pipe_name, e);
@@ -57,13 +58,16 @@ impl IpcServer {
 
             // Create next server instance for next connection
             debug!("Creating next server instance for: {}", self.pipe_name);
-            let next_server = ServerOptions::new().create(&self.pipe_name).map_err(|e| {
-                error!(
-                    "Failed to create next server instance for {}: {}",
-                    self.pipe_name, e
-                );
-                bunctl_core::Error::Io(e)
-            })?;
+            let next_server = ServerOptions::new()
+                .max_instances(254) // Windows allows up to 254 concurrent connections
+                .create(&self.pipe_name)
+                .map_err(|e| {
+                    error!(
+                        "Failed to create next server instance for {}: {}",
+                        self.pipe_name, e
+                    );
+                    bunctl_core::Error::Io(e)
+                })?;
 
             let connection = IpcConnection::from_server(server);
             self.server = Some(next_server);
