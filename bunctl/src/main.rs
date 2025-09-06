@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod common;
 mod daemon;
 
 use clap::Parser;
@@ -15,20 +16,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize console subscriber for profiling if enabled
     #[cfg(feature = "console")]
-    let use_console = std::env::var("TOKIO_CONSOLE").is_ok();
-    #[cfg(not(feature = "console"))]
-    let use_console = false;
-
-    if use_console {
-        #[cfg(feature = "console")]
-        {
-            console_subscriber::init();
-            return daemon::run(cli::DaemonArgs {
-                config: None,
-                socket: None,
-            })
-            .await;
-        }
+    if std::env::var("TOKIO_CONSOLE").is_ok() {
+        console_subscriber::init();
+        return daemon::run(cli::DaemonArgs {
+            config: None,
+            socket: None,
+        })
+        .await;
     }
 
     // Set default log level for daemon mode

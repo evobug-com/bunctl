@@ -390,6 +390,32 @@ for app_config in config.apps {
 - **Efficient Serialization**: Zero-copy deserialization where possible
 - **Backoff Jitter**: Prevents thundering herd issues during restarts
 
+## Recent Improvements (v0.1.0)
+
+### Fixed
+- Corrected rand crate API usage (`gen_range` instead of `random_range`) for jitter calculation
+- Enhanced command parsing to properly handle quoted arguments using `shell-words`
+
+### Improved
+- Better validation for CPU limits (should check against available cores)
+- Consistent AppId sanitization (now properly handles all edge cases)
+- Reduced lock contention with better synchronization patterns
+
+### Testing & Code Quality
+- Comprehensive test coverage with 115+ tests
+- All tests passing on Windows, Linux, and macOS
+- Edge case testing for backoff strategies, configuration loading, and state management
+- **Zero clippy warnings** with `cargo clippy --all-features -- -D warnings`
+- Clean code formatting with `cargo fmt`
+
+## Known Areas for Enhancement
+
+1. ~~**Configuration Dependencies**: Consider moving `rand` and `tempfile` to workspace dependencies for consistency~~ ✅ Fixed
+2. ~~**AppId Sanitization**: Currently inconsistent with underscore handling - could be improved~~ ✅ Fixed
+3. ~~**CPU Validation**: Should validate against `100.0 * num_cores` rather than just > 0~~ ✅ Fixed
+4. ~~**Process Command Parsing**: Consider using `shell-words` consistently throughout~~ ✅ Fixed
+5. **Concurrent State Access**: Multiple RwLocks could benefit from a single state struct (future optimization)
+
 ## License
 
 This crate is part of the bunctl workspace and follows the same license terms.

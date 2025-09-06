@@ -13,7 +13,7 @@ A production-grade process manager for Bun applications, designed as a zero-over
 - 📝 **Structured logging** - Async log management with rotation and compression
 - 🎯 **Resource management** - Memory and CPU limits with OS-specific enforcement
 - 🔧 **Multiple config formats** - Native bunctl.json, PM2-compatible ecosystem.config.js, and package.json
-- 🖥️ **Cross-platform** - Native support for Linux, Windows, and macOS
+- 🖥️ **Cross-platform** - Native support for Linux and Windows
 - 📡 **IPC communication** - Daemon architecture with real-time command and event handling
 
 ## Installation
@@ -35,7 +35,7 @@ cargo build --release -p bunctl
 
 - **Rust**: 1.89.0 or later (2024 Edition)
 - **Bun**: Latest version for running applications
-- **Operating System**: Linux, Windows 10+, or macOS
+- **Operating System**: Linux or Windows 10+
 
 ## Quick Start
 
@@ -475,7 +475,6 @@ OS-specific resource enforcement:
 
 - **Linux**: cgroups v2 for memory and CPU limits
 - **Windows**: Job Objects for process isolation and limits
-- **macOS**: Process groups with resource monitoring
 
 ## Advanced Features
 
@@ -564,12 +563,6 @@ export TOKIO_CONSOLE=127.0.0.1:6669
 - **Service Integration**: Windows service compatibility
 - **Process Trees**: Automatic child process management
 
-### macOS
-- **Process Groups**: setpgid() for process management
-- **FSEvents**: File system event monitoring
-- **kqueue**: Efficient event notification
-- **Resource Monitoring**: Native system resource tracking
-
 ## Development
 
 ### Building from Source
@@ -656,7 +649,7 @@ cargo test -p bunctl config_tests
 
 - **Single-threaded runtime**: Eliminates context switching overhead
 - **Lock-free logging**: Atomic operations for log writes
-- **OS-native events**: epoll/IOCP/kqueue for efficient monitoring  
+- **OS-native events**: epoll (Linux) / IOCP (Windows) for efficient monitoring  
 - **Zero-copy IPC**: Efficient inter-process communication
 - **Lazy initialization**: Resources allocated on demand
 
@@ -671,7 +664,6 @@ bunctl status
 
 # Check logs
 tail -f ~/.local/share/bunctl/logs/daemon.log  # Linux
-tail -f ~/Library/Logs/bunctl/daemon.log       # macOS
 type "%LOCALAPPDATA%\bunctl\logs\daemon.log"   # Windows
 
 # Force restart daemon

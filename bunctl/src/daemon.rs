@@ -1052,15 +1052,23 @@ impl Daemon {
             use tokio::signal::unix::{SignalKind, signal};
 
             tokio::spawn(async move {
-                let mut sigterm = signal(SignalKind::terminate()).unwrap();
-                let mut sigint = signal(SignalKind::interrupt()).unwrap();
+                let sigterm_result = signal(SignalKind::terminate());
+                let sigint_result = signal(SignalKind::interrupt());
 
-                tokio::select! {
-                    _ = sigterm.recv() => {
-                        info!("Received SIGTERM");
+                match (sigterm_result, sigint_result) {
+                    (Ok(mut sigterm), Ok(mut sigint)) => {
+                        tokio::select! {
+                            _ = sigterm.recv() => {
+                                info!("Received SIGTERM");
+                            }
+                            _ = sigint.recv() => {
+                                info!("Received SIGINT");
+                            }
+                        }
                     }
-                    _ = sigint.recv() => {
-                        info!("Received SIGINT");
+                    (Err(e), _) | (_, Err(e)) => {
+                        error!("Failed to setup signal handlers: {}", e);
+                        // Still try to send shutdown signal in case of error
                     }
                 }
 
@@ -1250,7 +1258,13 @@ impl Daemon {
                                 let app_status =
                                     AppStatus::from_app_and_supervisor(&app, &config, supervisor)
                                         .await;
-                                serde_json::to_value(app_status).unwrap()
+                                serde_json::to_value(app_status).unwrap_or_else(|e| {
+                                    error!("Failed to serialize app status: {}", e);
+                                    serde_json::json!({
+                                        "error": "Failed to serialize status",
+                                        "name": name
+                                    })
+                                })
                             } else {
                                 return IpcResponse::Error {
                                     message: format!("App {} not found", name),
@@ -1270,7 +1284,14 @@ impl Daemon {
                         let config = entry.config.read().clone();
                         let app_status =
                             AppStatus::from_app_and_supervisor(&entry, &config, supervisor).await;
-                        all_status.push(serde_json::to_value(app_status).unwrap());
+                        let status_value = serde_json::to_value(app_status).unwrap_or_else(|e| {
+                            error!("Failed to serialize app status for {}: {}", entry.id, e);
+                            serde_json::json!({
+                                "error": "Failed to serialize status",
+                                "app_id": entry.id.to_string()
+                            })
+                        });
+                        all_status.push(status_value);
                     }
                     serde_json::json!(all_status)
                 };

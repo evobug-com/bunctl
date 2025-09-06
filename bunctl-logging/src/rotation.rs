@@ -1,9 +1,10 @@
 use chrono::{DateTime, Local, Timelike};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use std::fs::{self};
+use std::fs;
 use std::path::Path;
 use tokio::fs as tokio_fs;
+use tracing::{debug, error, warn};
 
 #[derive(Debug, Clone)]
 pub enum RotationStrategy {
@@ -71,64 +72,136 @@ impl LogRotation {
         let rotated_name = if self.config.compression {
             format!(
                 "{}.{}.log.gz",
-                log_path.file_stem().unwrap().to_string_lossy(),
+                log_path.file_stem().unwrap_or_default().to_string_lossy(),
                 timestamp
             )
         } else {
             format!(
                 "{}.{}.log",
-                log_path.file_stem().unwrap().to_string_lossy(),
+                log_path.file_stem().unwrap_or_default().to_string_lossy(),
                 timestamp
             )
         };
 
-        let rotated_path = log_path.parent().unwrap().join(&rotated_name);
+        let parent = log_path
+            .parent()
+            .ok_or_else(|| bunctl_core::Error::Other(anyhow::anyhow!("Invalid log path")))?;
+        let rotated_path = parent.join(&rotated_name);
 
+        debug!("Rotating log from {:?} to {:?}", log_path, rotated_path);
+
+        // Perform rotation based on configuration
         if self.config.compression {
             self.compress_and_rotate(log_path, &rotated_path).await?;
         } else {
-            // Try to rename, on Windows this might fail if file is in use
-            match tokio_fs::rename(log_path, &rotated_path).await {
-                Ok(_) => {}
-                Err(_) if cfg!(windows) => {
-                    // On Windows, copy and truncate instead
-                    tokio_fs::copy(log_path, &rotated_path).await?;
-                    tokio_fs::write(log_path, b"").await?;
+            self.rename_or_copy(log_path, &rotated_path).await?;
+        }
+
+        // Sync parent directory on Unix to ensure directory entry is persisted
+        #[cfg(unix)]
+        {
+            if let Ok(dir) = std::fs::File::open(parent) {
+                use std::os::unix::io::AsRawFd;
+                unsafe {
+                    libc::fsync(dir.as_raw_fd());
                 }
-                Err(e) => return Err(e.into()),
             }
         }
 
+        // Clean up old files
         self.cleanup_old_files(log_path).await?;
+
+        // Update rotation state
         self.last_rotation = Local::now();
         self.current_size = 0;
 
+        debug!("Log rotation completed successfully");
         Ok(())
+    }
+
+    async fn rename_or_copy(&self, source: &Path, dest: &Path) -> bunctl_core::Result<()> {
+        // Try atomic rename first
+        match tokio_fs::rename(source, dest).await {
+            Ok(_) => {
+                debug!("Successfully renamed log file");
+                Ok(())
+            }
+            Err(e) => {
+                // On Windows, rename might fail if file is open
+                #[cfg(windows)]
+                {
+                    debug!("Rename failed, trying copy+truncate: {}", e);
+                    // Copy the file
+                    tokio_fs::copy(source, dest).await?;
+                    // Truncate the original
+                    tokio_fs::write(source, b"").await?;
+                    Ok(())
+                }
+
+                #[cfg(not(windows))]
+                {
+                    Err(e.into())
+                }
+            }
+        }
     }
 
     async fn compress_and_rotate(&self, source: &Path, dest: &Path) -> bunctl_core::Result<()> {
         let source_path = source.to_path_buf();
         let dest_path = dest.to_path_buf();
 
-        tokio::task::spawn_blocking(move || -> bunctl_core::Result<()> {
+        // Use spawn_blocking for CPU-intensive compression
+        let result = tokio::task::spawn_blocking(move || -> bunctl_core::Result<()> {
+            // Open source file
             let input = fs::File::open(&source_path)?;
+            let mut reader = std::io::BufReader::with_capacity(65536, input);
+
+            // Create compressed output
             let output = fs::File::create(&dest_path)?;
             let mut encoder = GzEncoder::new(output, Compression::default());
 
-            let mut reader = std::io::BufReader::new(input);
+            // Copy and compress
             std::io::copy(&mut reader, &mut encoder)?;
             encoder.finish()?;
 
-            fs::remove_file(&source_path)?;
+            // On Windows, truncate instead of removing
+            #[cfg(windows)]
+            {
+                // Truncate the original file
+                fs::write(&source_path, b"")?;
+            }
+
+            #[cfg(not(windows))]
+            {
+                // Remove the original file
+                fs::remove_file(&source_path)?;
+            }
+
             Ok(())
         })
-        .await
-        .map_err(|e| bunctl_core::Error::Other(e.into()))?
+        .await;
+
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                error!("Compression failed: {}", e);
+                // Fallback to simple rename
+                self.rename_or_copy(source, dest).await
+            }
+            Err(e) => {
+                error!("Compression task panicked: {}", e);
+                // Fallback to simple rename
+                self.rename_or_copy(source, dest).await
+            }
+        }
     }
 
     async fn cleanup_old_files(&self, log_path: &Path) -> bunctl_core::Result<()> {
-        let parent = log_path.parent().unwrap();
-        let base_name = log_path.file_stem().unwrap().to_string_lossy();
+        let parent = log_path
+            .parent()
+            .ok_or_else(|| bunctl_core::Error::Other(anyhow::anyhow!("Invalid log path")))?;
+
+        let base_name = log_path.file_stem().unwrap_or_default().to_string_lossy();
 
         let mut entries = tokio_fs::read_dir(parent).await?;
         let mut log_files = Vec::new();
@@ -137,20 +210,40 @@ impl LogRotation {
             let path = entry.path();
             if let Some(name) = path.file_name() {
                 let name_str = name.to_string_lossy();
+
+                // Skip the current log file
+                if path == log_path {
+                    continue;
+                }
+
+                // Check if this is a rotated log file
                 if name_str.starts_with(&*base_name)
-                    && name_str != base_name
-                    && let Ok(metadata) = entry.metadata().await
-                    && let Ok(modified) = metadata.modified()
+                    && (name_str.contains(".log") || name_str.contains(".log.gz"))
                 {
-                    log_files.push((path, modified));
+                    // Try to get metadata
+                    match entry.metadata().await {
+                        Ok(metadata) => {
+                            if let Ok(modified) = metadata.modified() {
+                                log_files.push((path, modified));
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to get metadata for {:?}: {}", path, e);
+                        }
+                    }
                 }
             }
         }
 
+        // Sort by modification time (newest first)
         log_files.sort_by(|a, b| b.1.cmp(&a.1));
 
+        // Remove old files exceeding max_files limit
         for (path, _) in log_files.iter().skip(self.config.max_files as usize) {
-            let _ = tokio_fs::remove_file(path).await;
+            match tokio_fs::remove_file(path).await {
+                Ok(_) => debug!("Removed old log file: {:?}", path),
+                Err(e) => warn!("Failed to remove old log file {:?}: {}", path, e),
+            }
         }
 
         Ok(())
@@ -163,5 +256,68 @@ impl LogRotation {
     pub fn reset(&mut self) {
         self.current_size = 0;
         self.last_rotation = Local::now();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_rotation_by_size() {
+        let config = RotationConfig {
+            strategy: RotationStrategy::Size(100),
+            max_files: 3,
+            compression: false,
+        };
+
+        let rotation = LogRotation::new(config);
+
+        assert!(!rotation.should_rotate(50));
+        assert!(!rotation.should_rotate(99));
+        assert!(rotation.should_rotate(100));
+        assert!(rotation.should_rotate(101));
+    }
+
+    #[tokio::test]
+    async fn test_rotation_cleanup() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("test.log");
+
+        // Create some old log files
+        for i in 0..5 {
+            let old_log = temp_dir.path().join(format!("test.{}.log", i));
+            tokio::fs::write(&old_log, format!("old log {}", i))
+                .await
+                .unwrap();
+        }
+
+        let config = RotationConfig {
+            strategy: RotationStrategy::Size(100),
+            max_files: 2,
+            compression: false,
+        };
+
+        let mut rotation = LogRotation::new(config);
+
+        // Create current log file
+        tokio::fs::write(&log_path, "current log").await.unwrap();
+
+        // Perform rotation
+        rotation.rotate(&log_path).await.unwrap();
+
+        // Count remaining files
+        let mut entries = tokio::fs::read_dir(temp_dir.path()).await.unwrap();
+        let mut file_count = 0;
+
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry.path().extension().map_or(false, |ext| ext == "log") {
+                file_count += 1;
+            }
+        }
+
+        // Should have current log + max_files rotated logs
+        assert!(file_count <= 3);
     }
 }

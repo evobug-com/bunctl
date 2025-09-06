@@ -18,7 +18,8 @@ impl AppId {
     }
 
     fn sanitize(name: &str) -> String {
-        name.chars()
+        name.trim()
+            .chars()
             .map(|c| {
                 if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
                     c.to_ascii_lowercase()

@@ -3,7 +3,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ProcessRegistry {
     processes: Arc<RwLock<HashMap<AppId, ProcessHandle>>>,
     pid_to_app: Arc<RwLock<HashMap<u32, AppId>>>,
@@ -35,13 +35,7 @@ impl ProcessRegistry {
     }
 
     pub fn get(&self, app_id: &AppId) -> Option<ProcessHandle> {
-        self.processes.read().get(app_id).map(|h| ProcessHandle {
-            pid: h.pid,
-            app_id: h.app_id.clone(),
-            inner: None,
-            stdout: None,
-            stderr: None,
-        })
+        self.processes.read().get(app_id).cloned()
     }
 
     pub fn get_by_pid(&self, pid: u32) -> Option<AppId> {
@@ -58,5 +52,10 @@ impl ProcessRegistry {
 
     pub fn count(&self) -> usize {
         self.processes.read().len()
+    }
+
+    pub fn clear(&self) {
+        self.processes.write().clear();
+        self.pid_to_app.write().clear();
     }
 }

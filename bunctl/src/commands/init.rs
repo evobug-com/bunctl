@@ -45,7 +45,10 @@ pub async fn execute(args: InitArgs) -> anyhow::Result<()> {
         PathBuf::from("index.ts")
     });
 
-    let cwd = args.cwd.unwrap_or_else(|| std::env::current_dir().unwrap());
+    let cwd = args
+        .cwd
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| anyhow::anyhow!("Failed to determine working directory"))?;
 
     // Parse memory limit
     let max_memory = parse_memory_string(&args.memory);
@@ -288,7 +291,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_generate_bunctl_config() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         let app_config = AppConfig {
             name: "test-app".to_string(),
@@ -309,17 +312,19 @@ mod tests {
         };
 
         // Save current dir and change to temp directory to write config there
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_dir).unwrap();
+        let original_dir = std::env::current_dir().expect("Failed to get current directory");
+        std::env::set_current_dir(&temp_dir).expect("Failed to change to temp directory");
 
-        generate_bunctl_config(&app_config).await.unwrap();
+        generate_bunctl_config(&app_config)
+            .await
+            .expect("Failed to generate bunctl config");
 
         // The config should be written in the current directory (temp_dir)
         let config_path = temp_dir.path().join("bunctl.json");
         assert!(config_path.exists());
 
-        let content = fs::read_to_string(&config_path).unwrap();
-        let config: Config = serde_json::from_str(&content).unwrap();
+        let content = fs::read_to_string(&config_path).expect("Failed to read config file");
+        let config: Config = serde_json::from_str(&content).expect("Failed to parse config JSON");
 
         assert_eq!(config.apps.len(), 1);
         assert_eq!(config.apps[0].name, "test-app");
@@ -335,13 +340,13 @@ mod tests {
         assert_eq!(config.apps[0].max_cpu_percent, Some(50.0));
 
         // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
+        std::env::set_current_dir(original_dir).expect("Failed to restore original directory");
     }
 
     #[tokio::test]
     #[serial]
     async fn test_generate_ecosystem_config() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         let app_config = AppConfig {
             name: "eco-app".to_string(),
@@ -363,15 +368,17 @@ mod tests {
         };
 
         // Save current dir and change to temp directory to write config there
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_dir).unwrap();
+        let original_dir = std::env::current_dir().expect("Failed to get current directory");
+        std::env::set_current_dir(&temp_dir).expect("Failed to change to temp directory");
 
-        generate_ecosystem_config(&app_config, 1).await.unwrap();
+        generate_ecosystem_config(&app_config, 1)
+            .await
+            .expect("Failed to generate ecosystem config");
 
         let config_path = temp_dir.path().join("ecosystem.config.js");
         assert!(config_path.exists());
 
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(&config_path).expect("Failed to read config file");
         assert!(content.contains("module.exports"));
         assert!(content.contains("eco-app"));
         assert!(content.contains("index.ts"));
@@ -379,13 +386,13 @@ mod tests {
         assert!(content.contains("production"));
 
         // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
+        std::env::set_current_dir(original_dir).expect("Failed to restore original directory");
     }
 
     #[tokio::test]
     #[serial]
     async fn test_generate_ecosystem_config_cluster_mode() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         let app_config = AppConfig {
             name: "cluster-app".to_string(),
@@ -399,15 +406,17 @@ mod tests {
         };
 
         // Save current dir and change to temp directory to write config there
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_dir).unwrap();
+        let original_dir = std::env::current_dir().expect("Failed to get current directory");
+        std::env::set_current_dir(&temp_dir).expect("Failed to change to temp directory");
 
-        generate_ecosystem_config(&app_config, 4).await.unwrap();
+        generate_ecosystem_config(&app_config, 4)
+            .await
+            .expect("Failed to generate ecosystem config with cluster mode");
 
         let config_path = temp_dir.path().join("ecosystem.config.js");
         assert!(config_path.exists());
 
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(&config_path).expect("Failed to read config file");
         // The content is JavaScript, but contains JSON inside module.exports
         // Check for the values without expecting exact JSON formatting
         assert!(content.contains("\"instances\"") && content.contains("4"));
@@ -415,7 +424,7 @@ mod tests {
         assert!(content.contains("\"autorestart\"") && content.contains("true"));
 
         // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
+        std::env::set_current_dir(original_dir).expect("Failed to restore original directory");
     }
 
     #[test]

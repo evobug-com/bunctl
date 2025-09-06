@@ -239,13 +239,24 @@ impl ConfigWatcher {
                 .map_err(|e| crate::Error::Config(format!("App '{}': {}", app.name, e)))?;
 
             // Validate numeric ranges
-            if let Some(cpu) = app.max_cpu_percent
-                && cpu <= 0.0
-            {
-                return Err(crate::Error::Config(format!(
-                    "App '{}': max_cpu_percent must be greater than 0.0, got {}",
-                    app.name, cpu
-                )));
+            if let Some(cpu) = app.max_cpu_percent {
+                if cpu <= 0.0 {
+                    return Err(crate::Error::Config(format!(
+                        "App '{}': max_cpu_percent must be greater than 0.0, got {}",
+                        app.name, cpu
+                    )));
+                }
+                // Get number of CPU cores for validation
+                let num_cores = std::thread::available_parallelism()
+                    .map(|n| n.get() as f32)
+                    .unwrap_or(1.0);
+                let max_cpu = 100.0 * num_cores;
+                if cpu > max_cpu {
+                    return Err(crate::Error::Config(format!(
+                        "App '{}': max_cpu_percent ({}) exceeds system maximum ({}% for {} cores)",
+                        app.name, cpu, max_cpu, num_cores
+                    )));
+                }
             }
 
             if app.backoff.multiplier < 1.0 {
@@ -384,9 +395,14 @@ impl From<AppConfigRaw> for AppConfig {
             // Use shell-words to properly parse the command
             match shell_words::split(&raw.command) {
                 Ok(parts) if !parts.is_empty() => {
-                    let command = parts[0].clone();
-                    let args = parts.into_iter().skip(1).collect();
-                    (command, args)
+                    // Safe array access using first() to avoid panic
+                    if let Some(first) = parts.first() {
+                        let command = first.clone();
+                        let args = parts.into_iter().skip(1).collect();
+                        (command, args)
+                    } else {
+                        (raw.command, Vec::new())
+                    }
                 }
                 _ => (raw.command, Vec::new()),
             }

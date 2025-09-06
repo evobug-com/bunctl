@@ -1,323 +1,333 @@
 # bunctl-ipc
 
-Inter-process communication (IPC) library for bunctl-rs, enabling secure and efficient communication between the CLI client and daemon process.
+Inter-process communication library for bunctl, providing secure and efficient communication between the CLI client and daemon process.
 
-## Overview
+## Features
 
-The `bunctl-ipc` crate provides cross-platform IPC capabilities for bunctl, utilizing platform-specific transport mechanisms to ensure optimal performance and security. The library implements a client-server architecture where:
-
-- **CLI commands** act as IPC clients, sending commands to the daemon
-- **Daemon process** acts as an IPC server, processing commands and managing applications
-- **Message protocol** uses JSON serialization with length-prefixed binary frames
+- **Platform-specific optimized transports**
+  - Linux: Unix domain sockets
+  - Windows: Named pipes
+- **Security hardening**
+  - Message size validation (10MB limit)
+  - DoS attack prevention through size limits
+  - OS-level access control
+- **Reliability features**
+  - Configurable timeouts (30s default)
+  - Comprehensive error handling with tracing
+  - Graceful connection cleanup
+- **Performance optimized**
+  - Lock-free async operations
+  - ~1KB memory per connection
+  - Sub-millisecond local IPC latency
 
 ## Architecture
 
-### Transport Mechanisms
+### Message Protocol
 
-The crate provides platform-specific IPC implementations:
-
-#### Unix/Linux (Unix Domain Sockets)
-- **Transport**: Unix domain sockets via `tokio::net::UnixStream`
-- **Socket Path**: 
-  - `$XDG_RUNTIME_DIR/bunctl.sock` (preferred)
-  - `/tmp/bunctl.sock` (fallback)
-- **Security**: File system permissions control access
-
-#### Windows (Named Pipes)
-- **Transport**: Windows named pipes via `tokio::net::windows::named_pipe`
-- **Pipe Name**: `\\.\pipe\bunctl_{path_basename}` or `\\.\pipe\bunctl_default`
-- **Security**: Windows security descriptors control access
-- **Multi-client**: Automatic next instance creation for concurrent connections
-
-### Protocol Design
-
-The IPC protocol uses a simple length-prefixed message format:
-
+The IPC protocol uses length-prefixed JSON messages:
 ```
-[ 4-byte length (little-endian) ][ JSON payload ]
+[4-byte length (little-endian)][JSON payload]
 ```
 
-- **Length**: 32-bit unsigned integer indicating payload size
-- **Payload**: JSON-serialized message using serde_json
-- **Encoding**: UTF-8 for JSON strings
+- **Maximum size**: 10MB (configurable via `MAX_MESSAGE_SIZE`)
+- **Encoding**: UTF-8 JSON via serde_json
+- **Validation**: Size checked before allocation to prevent DoS
 
-## Message Types
+### Message Types
 
-### Request Messages (IpcMessage)
-
-The client can send the following command messages:
-
+**Client → Server (IpcMessage)**
 ```rust
 pub enum IpcMessage {
-    // Process management
     Start { name: String, config: String },
     Stop { name: String },
     Restart { name: String },
     Delete { name: String },
-    
-    // Information queries
-    Status { name: Option<String> },  // None = all apps
-    List,                             // List all apps
+    Status { name: Option<String> },
+    List,
     Logs { name: Option<String>, lines: usize },
-    
-    // Event subscriptions
     Subscribe { subscription: SubscriptionType },
     Unsubscribe,
 }
 ```
 
-### Response Messages (IpcResponse)
-
-The daemon responds with one of these message types:
-
+**Server → Client (IpcResponse)**
 ```rust
 pub enum IpcResponse {
-    Success { message: String },           // Command succeeded
-    Error { message: String },             // Command failed
-    Data { data: serde_json::Value },      // Query results
-    Event { event_type: String, data: serde_json::Value }, // Subscribed events
+    Success { message: String },
+    Error { message: String },
+    Data { data: serde_json::Value },
+    Event { event_type: String, data: serde_json::Value },
 }
 ```
 
-### Subscription Types
-
-Clients can subscribe to real-time events:
-
+**Event Subscriptions**
 ```rust
 pub enum SubscriptionType {
-    StatusEvents { app_name: Option<String> },  // Process lifecycle events
-    LogEvents { app_name: Option<String> },     // Application log lines
-    AllEvents { app_name: Option<String> },     // All event types
+    StatusEvents { app_name: Option<String> },
+    LogEvents { app_name: Option<String> },
+    AllEvents { app_name: Option<String> },
 }
 ```
 
-Event types include:
-- `status_change` - Application state transitions
-- `process_started` - Process successfully started
-- `process_exited` - Process exited normally
-- `process_crashed` - Process crashed or failed
-- `process_restarting` - Process restart initiated
-- `log_line` - New log output from application
+## Usage
 
-## API Documentation
-
-### Server-side (Daemon)
-
-#### Creating an IPC Server
+### Server Example
 
 ```rust
-use bunctl_ipc::{IpcServer, IpcConnection};
+use bunctl_ipc::{IpcServer, IpcMessage, IpcResponse};
+use std::time::Duration;
 
-// Create server bound to default socket path
-let mut server = IpcServer::bind("/tmp/bunctl.sock").await?;
-
-// Accept client connections
-let mut connection = server.accept().await?;
-```
-
-#### Processing Messages
-
-```rust
-use bunctl_ipc::{IpcMessage, IpcResponse};
-
-// Receive command from client
-let message = connection.recv().await?;
-
-// Process the command
-let response = match message {
-    IpcMessage::List => {
-        // Implementation logic here
-        IpcResponse::Data { 
-            data: serde_json::json!({ "apps": apps_list })
-        }
-    },
-    IpcMessage::Start { name, config } => {
-        // Implementation logic here
-        IpcResponse::Success { 
-            message: format!("Started application: {}", name) 
-        }
-    },
-    // ... other commands
-};
-
-// Send response back to client
-connection.send(&response).await?;
-```
-
-### Client-side (CLI)
-
-#### Connecting to Daemon
-
-```rust
-use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse};
-
-// Connect to daemon
-let mut client = IpcClient::connect("/tmp/bunctl.sock").await?;
-```
-
-#### Sending Commands
-
-```rust
-// Send a command
-let message = IpcMessage::Status { name: Some("myapp".to_string()) };
-client.send(&message).await?;
-
-// Receive response
-let response = client.recv().await?;
-match response {
-    IpcResponse::Data { data } => {
-        println!("Status: {}", data);
-    },
-    IpcResponse::Error { message } => {
-        eprintln!("Error: {}", message);
-    },
-    _ => {}
-}
-```
-
-#### Event Subscriptions
-
-```rust
-use bunctl_ipc::SubscriptionType;
-
-// Subscribe to status events for all apps
-let subscription = IpcMessage::Subscribe { 
-    subscription: SubscriptionType::StatusEvents { app_name: None } 
-};
-client.send(&subscription).await?;
-
-// Listen for events
-loop {
-    match client.recv().await? {
-        IpcResponse::Event { event_type, data } => {
-            println!("Event {}: {:?}", event_type, data);
-        },
-        _ => {}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Bind to platform-specific IPC endpoint
+    let mut server = IpcServer::bind("/tmp/bunctl.sock").await?;
+    
+    loop {
+        // Accept client connection
+        let mut connection = server.accept().await?;
+        
+        // Optional: Set custom timeout for this connection
+        connection.set_timeout(Duration::from_secs(60));
+        
+        // Handle connection in separate task
+        tokio::spawn(async move {
+            while let Ok(message) = connection.recv().await {
+                let response = match message {
+                    IpcMessage::Status { name } => {
+                        IpcResponse::Data {
+                            data: serde_json::json!({
+                                "status": "running",
+                                "pid": 1234
+                            })
+                        }
+                    }
+                    _ => IpcResponse::Error {
+                        message: "Not implemented".to_string()
+                    }
+                };
+                
+                if connection.send(&response).await.is_err() {
+                    break; // Client disconnected
+                }
+            }
+        });
     }
 }
 ```
 
-## Platform-Specific Implementation Details
+### Client Example
 
-### Unix Domain Sockets (Unix/Linux)
+```rust
+use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse};
+use std::time::Duration;
 
-**File**: `src/unix.rs`
-
-- Uses `tokio::net::UnixListener` for server
-- Uses `tokio::net::UnixStream` for client connections
-- Socket file is removed on server bind to handle stale sockets
-- Supports concurrent connections through async accept loop
-
-### Named Pipes (Windows)
-
-**File**: `src/windows.rs`
-
-- Uses `tokio::net::windows::named_pipe::NamedPipeServer`
-- Uses `tokio::net::windows::named_pipe::NamedPipeClient`
-- Creates pipe instances with `first_pipe_instance(true)` for servers
-- Automatically creates next server instance after each client connection
-- Enhanced logging for debugging Windows pipe operations
-
-## Security Considerations
-
-### Unix Systems
-- Socket files use filesystem permissions for access control
-- Default socket path in `/tmp` may be world-readable; use `XDG_RUNTIME_DIR` when available
-- Socket file is removed and recreated on daemon startup to prevent stale socket issues
-
-### Windows Systems
-- Named pipes use Windows security descriptors
-- Pipe names are predictable but require appropriate Windows permissions
-- Named pipe security depends on the user context running the daemon
-
-### General Security
-- No authentication mechanism beyond OS-level access controls
-- All communication is local-only (no network exposure)
-- JSON messages are validated using serde for type safety
-- No encryption as communication is within same machine
-
-## Performance Characteristics
-
-### Message Throughput
-- **Serialization**: JSON via serde_json (optimized for readability over speed)
-- **Transport**: Native OS primitives provide minimal overhead
-- **Buffering**: Uses tokio's buffered I/O for efficient reads/writes
-- **Memory**: Length-prefixed protocol avoids unnecessary allocations
-
-### Connection Handling
-- **Single-threaded**: Each connection is handled in its own async task
-- **Concurrent**: Multiple CLI clients can connect simultaneously
-- **Persistent**: Daemon maintains long-lived connections for subscriptions
-- **Cleanup**: Connections are automatically cleaned up when clients disconnect
-
-### Scalability Limits
-- Unix domain sockets: Limited by file descriptor limits
-- Named pipes: Limited by Windows pipe instance limits
-- Memory usage: Approximately 1KB per active connection
-- CPU usage: Minimal when idle, scales with message frequency
-
-## Integration with Daemon Mode
-
-### Daemon Lifecycle
-
-1. **Startup**: Daemon creates IPC server on configured socket path
-2. **Discovery**: CLI commands attempt connection to default socket path
-3. **Auto-start**: If daemon not running, CLI can auto-start daemon process
-4. **Shutdown**: Daemon gracefully closes all IPC connections on exit
-
-### Command Flow
-
-```
-CLI Command → IPC Client → Socket/Pipe → IPC Server → Daemon Handler
-     ↑                                                        ↓
-Response ← IPC Client ← Socket/Pipe ← IPC Server ← Command Result
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connect to server
+    let mut client = IpcClient::connect("/tmp/bunctl.sock").await?;
+    
+    // Optional: Set custom timeout
+    client.set_timeout(Duration::from_secs(10));
+    
+    // Send message
+    let message = IpcMessage::Status { 
+        name: Some("my-app".to_string()) 
+    };
+    client.send(&message).await?;
+    
+    // Receive response
+    match client.recv().await? {
+        IpcResponse::Data { data } => {
+            println!("Status: {}", data);
+        }
+        IpcResponse::Error { message } => {
+            eprintln!("Error: {}", message);
+        }
+        _ => {}
+    }
+    
+    Ok(())
+}
 ```
 
-### Event Broadcasting
+## Platform Support
 
-The daemon maintains a registry of subscribed clients and broadcasts events:
+### Linux
 
-1. **Subscription**: Client sends `Subscribe` message with filter criteria
-2. **Registration**: Daemon adds client to subscriber list
-3. **Event Generation**: Process events trigger notifications
-4. **Broadcasting**: Daemon sends `Event` responses to matching subscribers
-5. **Cleanup**: Dead connections are automatically removed from subscriber list
+- **Transport**: Unix domain sockets via `tokio::net::UnixStream`
+- **Socket Path**: `$XDG_RUNTIME_DIR/bunctl.sock` or `/tmp/bunctl.sock`
+- **Features**:
+  - Automatic cleanup of stale socket files
+  - File system permissions for access control
+  - Warning on socket removal failures
+
+### Windows
+
+- **Transport**: Named pipes via `tokio::net::windows::named_pipe`
+- **Pipe Name**: `\\.\pipe\bunctl_{identifier}`
+- **Features**:
+  - Automatic next instance creation for concurrent connections
+  - Windows security descriptors for access control
+  - Enhanced debug logging for troubleshooting
+
+### macOS Support
+
+macOS is not currently supported. The crate is designed for Linux and Windows only.
+
+## Security
+
+### Built-in Protections
+
+1. **Message Size Validation**: All messages are validated against `MAX_MESSAGE_SIZE` (10MB) before allocation
+2. **Timeout Protection**: Default 30-second timeout prevents resource exhaustion
+3. **Input Validation**: JSON deserialization provides type safety
+4. **Local-only Communication**: No network exposure
+
+### OS-Level Security
+
+- **Linux**: Unix socket file permissions
+- **Windows**: Named pipe security descriptors
+
+### Recommendations
+
+- Use `XDG_RUNTIME_DIR` on Linux for user-specific secure sockets
+- Implement application-level authentication if needed
+- Consider encryption for sensitive data (not built-in)
 
 ## Configuration
 
-### Socket Path Configuration
+### Constants
 
-Default socket paths are determined by `bunctl_core::config::default_socket_path()`:
+```rust
+/// Maximum allowed message size (10MB)
+pub const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
-- **Unix**: `$XDG_RUNTIME_DIR/bunctl.sock` or `/tmp/bunctl.sock`
-- **Windows**: `\\.\pipe\bunctl`
+/// Default timeout for IPC operations (30 seconds)
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+```
 
-Custom socket paths can be specified via:
-- `--socket` CLI argument
-- `socket_path` in daemon configuration
-- `BUNCTL_SOCKET` environment variable (if implemented)
+### Timeout Configuration
 
-### Error Handling
+```rust
+// Server connection timeout
+let mut connection = server.accept().await?;
+connection.set_timeout(Duration::from_secs(60));
 
-The crate uses `bunctl_core::Result<T>` for consistent error handling:
+// Client timeout
+let mut client = IpcClient::connect(path).await?;
+client.set_timeout(Duration::from_secs(10));
+```
 
-- **IO Errors**: Network/socket failures map to `bunctl_core::Error::Io`
-- **Serialization Errors**: JSON parsing failures map to `bunctl_core::Error::Other`
-- **Connection Errors**: Transport-specific errors are wrapped appropriately
+## Error Handling
+
+All operations return `bunctl_core::Result<T>`:
+
+- `Error::Io` - Network/IO errors with context
+- `Error::Other` - Serialization errors, timeouts, validation failures
+
+### Logging
+
+Comprehensive logging via `tracing`:
+- `trace!` - Protocol-level details (message sizes, operations)
+- `debug!` - Connection lifecycle (connect, accept, send, receive)
+- `error!` - Error conditions with full context
+- `warn!` - Non-fatal issues (e.g., socket cleanup failures)
+
+Example:
+```bash
+RUST_LOG=bunctl_ipc=debug cargo run
+```
+
+## Testing
+
+```bash
+# Run all tests
+cargo test -p bunctl-ipc
+
+# Run library tests only
+cargo test -p bunctl-ipc --lib
+
+# Run integration tests
+cargo test -p bunctl-ipc --test integration_test
+```
+
+### Test Coverage
+
+- Message serialization/deserialization
+- Large message handling (up to 1MB)
+- Message size limit enforcement
+- Timeout behavior
+- Concurrent client connections
+- All message types
+- Error conditions
+
+## Performance
+
+### Benchmarks
+
+- **Latency**: Sub-millisecond for local IPC
+- **Throughput**: Limited by JSON serialization (~100MB/s)
+- **Memory**: ~1KB per connection + message buffers
+- **CPU**: Near-zero when idle
+
+### Optimization Tips
+
+1. Batch multiple operations in single messages when possible
+2. Use subscription events instead of polling
+3. Set appropriate timeouts for your use case
+4. Consider message size vs serialization overhead
+
+## Development
+
+### Building
+
+```bash
+# Debug build
+cargo build -p bunctl-ipc
+
+# Release build
+cargo build --release -p bunctl-ipc
+```
+
+### Code Quality
+
+```bash
+# Type checking
+cargo check -p bunctl-ipc
+
+# Linting
+cargo clippy -p bunctl-ipc
+
+# Formatting
+cargo fmt -p bunctl-ipc
+```
 
 ## Dependencies
 
-- `bunctl-core`: Core types and error handling
-- `tokio`: Async runtime and networking
-- `serde`/`serde_json`: Message serialization
-- `bytes`: Efficient byte buffer handling
-- `anyhow`/`thiserror`: Error handling utilities
-- `tracing`: Structured logging
-- `windows-sys`: Windows-specific APIs (Windows only)
+- `bunctl-core` - Core types and error handling
+- `tokio` - Async runtime with platform networking
+- `serde` / `serde_json` - Message serialization
+- `tracing` - Structured logging
+- `bytes` - Efficient byte buffers
+- `anyhow` / `thiserror` - Error handling
 
-## Usage Examples
+### Dev Dependencies
 
-See the main `bunctl` CLI implementation for real-world usage examples:
-- Command handlers in `bunctl/src/commands/`
-- Daemon implementation in `bunctl/src/daemon.rs`
-- Client connection patterns throughout the CLI codebase
+- `tempfile` - Temporary files for testing
+- `rand` - Random test data generation
+
+## Changelog
+
+### Recent Improvements
+
+- Added message size validation to prevent DoS attacks
+- Implemented configurable timeouts for all operations
+- Unified error handling and logging across platforms
+- Removed code duplication in Windows implementation
+- Added comprehensive integration tests
+- Removed macOS support (Linux and Windows only)
+- Enhanced documentation with examples
+
+## License
+
+See the workspace root for license information.

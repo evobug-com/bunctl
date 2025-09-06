@@ -1,10 +1,9 @@
-use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse};
-use std::path::PathBuf;
+use crate::common::connect_to_daemon;
+use anyhow::Context;
+use bunctl_ipc::{IpcMessage, IpcResponse};
 
 pub async fn execute() -> anyhow::Result<()> {
-    let socket_path = get_socket_path();
-
-    let mut client = match IpcClient::connect(&socket_path).await {
+    let mut client = match connect_to_daemon().await {
         Ok(client) => client,
         Err(_) => {
             println!("No daemon running");
@@ -14,9 +13,16 @@ pub async fn execute() -> anyhow::Result<()> {
 
     let msg = IpcMessage::List;
 
-    client.send(&msg).await?;
+    client
+        .send(&msg)
+        .await
+        .context("Failed to send list command")?;
 
-    match client.recv().await? {
+    match client
+        .recv()
+        .await
+        .context("Failed to receive response from daemon")?
+    {
         IpcResponse::Data { data } => {
             if let Some(apps) = data.as_array() {
                 if apps.is_empty() {
@@ -35,8 +41,4 @@ pub async fn execute() -> anyhow::Result<()> {
         IpcResponse::Error { message } => Err(anyhow::anyhow!(message)),
         _ => Ok(()),
     }
-}
-
-fn get_socket_path() -> PathBuf {
-    bunctl_core::config::default_socket_path()
 }

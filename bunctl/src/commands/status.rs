@@ -1,7 +1,10 @@
 use crate::cli::StatusArgs;
-use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse, SubscriptionType};
+use crate::common::{
+    RUNNING_ICON, STOPPED_ICON, connect_to_daemon, daemon_not_running_message, validate_app_name,
+};
+use anyhow::Context;
+use bunctl_ipc::{IpcMessage, IpcResponse, SubscriptionType};
 use colored::*;
-use std::path::PathBuf;
 
 pub async fn execute(args: StatusArgs) -> anyhow::Result<()> {
     if args.watch {
@@ -12,9 +15,12 @@ pub async fn execute(args: StatusArgs) -> anyhow::Result<()> {
 }
 
 async fn execute_once(args: StatusArgs) -> anyhow::Result<()> {
-    let socket_path = get_socket_path();
+    // Validate the application name if provided
+    if let Some(ref name) = args.name {
+        validate_app_name(name)?;
+    }
 
-    let mut client = match IpcClient::connect(&socket_path).await {
+    let mut client = match connect_to_daemon().await {
         Ok(client) => client,
         Err(_) => {
             if args.json {
@@ -30,9 +36,16 @@ async fn execute_once(args: StatusArgs) -> anyhow::Result<()> {
         name: args.name.clone(),
     };
 
-    client.send(&msg).await?;
+    client
+        .send(&msg)
+        .await
+        .context("Failed to send status command")?;
 
-    match client.recv().await? {
+    match client
+        .recv()
+        .await
+        .context("Failed to receive response from daemon")?
+    {
         IpcResponse::Data { data } => {
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&data)?);
@@ -47,11 +60,14 @@ async fn execute_once(args: StatusArgs) -> anyhow::Result<()> {
 }
 
 async fn execute_watch_mode(args: StatusArgs) -> anyhow::Result<()> {
-    let socket_path = get_socket_path();
+    // Validate the application name if provided
+    if let Some(ref name) = args.name {
+        validate_app_name(name)?;
+    }
 
-    let mut client = IpcClient::connect(&socket_path)
+    let mut client = connect_to_daemon()
         .await
-        .map_err(|_| anyhow::anyhow!("Daemon not running. Cannot watch status."))?;
+        .context(daemon_not_running_message("watch status"))?;
 
     // Subscribe to status events
     let subscription = SubscriptionType::StatusEvents {
@@ -474,13 +490,13 @@ fn display_app_status(app: &serde_json::Value) -> anyhow::Result<()> {
 fn format_status_display(state: &str) -> (&'static str, String, Color) {
     // Parse the debug state format and convert to nice display
     if state == "Running" {
-        ("●", "RUNNING".to_string(), Color::Green)
+        (RUNNING_ICON, "RUNNING".to_string(), Color::Green)
     } else if state == "Starting" {
         ("◐", "STARTING".to_string(), Color::Yellow)
     } else if state == "Stopping" {
         ("◑", "STOPPING".to_string(), Color::Yellow)
     } else if state == "Stopped" {
-        ("○", "STOPPED".to_string(), Color::Red)
+        (STOPPED_ICON, "STOPPED".to_string(), Color::Red)
     } else if state == "Crashed" {
         ("✗", "CRASHED".to_string(), Color::Red)
     } else if state.starts_with("Backoff") {
@@ -576,8 +592,4 @@ fn format_event_description(event_type: &str, data: &serde_json::Value) -> Strin
         }
         _ => format!("Event: {}", event_type),
     }
-}
-
-fn get_socket_path() -> PathBuf {
-    bunctl_core::config::default_socket_path()
 }

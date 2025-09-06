@@ -76,10 +76,10 @@ async fn test_concurrent_buffer_operations() {
     for _ in 0..2 {
         let buffer_clone = buffer.clone();
         let handle = task::spawn(async move {
-            let mut total_lines = 0;
+            let mut _total_lines = 0;
             for _ in 0..50 {
                 let lines = buffer_clone.get_lines();
-                total_lines += lines.len();
+                _total_lines += lines.len();
                 tokio::time::sleep(Duration::from_micros(100)).await;
             }
             // Return nothing to match other tasks

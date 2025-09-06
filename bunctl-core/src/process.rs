@@ -274,13 +274,19 @@ impl ProcessBuilder {
         // Parse command string to handle cases like "bun run script.js"
         let (actual_command, mut parsed_args) =
             if self.command.contains(' ') && self.args.is_empty() {
-                let parts: Vec<&str> = self.command.split_whitespace().collect();
-                if !parts.is_empty() {
-                    let cmd = parts[0].to_string();
-                    let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                    (cmd, args)
-                } else {
-                    (self.command.clone(), Vec::new())
+                // Use shell-words to properly handle quoted arguments
+                match shell_words::split(&self.command) {
+                    Ok(parts) if !parts.is_empty() => {
+                        // Safe array access using first() to avoid panic
+                        if let Some(first) = parts.first() {
+                            let cmd = first.clone();
+                            let args = parts.into_iter().skip(1).collect();
+                            (cmd, args)
+                        } else {
+                            (self.command.clone(), Vec::new())
+                        }
+                    }
+                    _ => (self.command.clone(), Vec::new()),
                 }
             } else {
                 (self.command.clone(), Vec::new())

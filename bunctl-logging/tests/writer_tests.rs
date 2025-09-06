@@ -19,6 +19,8 @@ async fn test_log_writer_basic() {
         },
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -53,6 +55,8 @@ async fn test_log_writer_auto_flush() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(50), // Short interval for testing
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -78,6 +82,8 @@ async fn test_log_writer_binary_data() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -91,7 +97,7 @@ async fn test_log_writer_binary_data() {
     writer.write_line("Hello 世界 🌍").unwrap();
 
     writer.flush().await.unwrap();
-    writer.close().await.unwrap(); // Properly close the writer - this now waits for background task
+    writer.shutdown().await.unwrap(); // Properly close the writer - this now waits for background task
 
     // Read as bytes
     let content = fs::read(&log_path).await.unwrap();
@@ -124,6 +130,8 @@ async fn test_log_writer_rotation_trigger() {
         },
         buffer_size: 4096,
         flush_interval: Duration::from_millis(50),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -186,6 +194,8 @@ async fn test_log_writer_close() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -194,7 +204,7 @@ async fn test_log_writer_close() {
     writer.write_line("Before close").unwrap();
 
     // Close the writer
-    writer.close().await.unwrap();
+    writer.shutdown().await.unwrap();
 
     // Give time for close to complete
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -215,6 +225,8 @@ async fn test_async_log_writer() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -266,6 +278,8 @@ async fn test_log_writer_empty_writes() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -297,6 +311,8 @@ async fn test_log_writer_large_writes() {
         },
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = LogWriter::new(config).await.unwrap();
@@ -337,6 +353,8 @@ async fn test_log_writer_concurrent_writes() {
         rotation: RotationConfig::default(),
         buffer_size: 8192,
         flush_interval: Duration::from_millis(50),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = std::sync::Arc::new(LogWriter::new(config).await.unwrap());
