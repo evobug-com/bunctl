@@ -171,7 +171,7 @@ fn test_logs_command() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Daemon not running. No logs available.",
+            "Daemon not running. Cannot view logs.",
         ));
 }
 
@@ -183,7 +183,7 @@ fn test_restart_command() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Daemon not running. No apps to restart.",
+            "Daemon not running. Cannot restart application.",
         ));
 }
 
@@ -195,6 +195,6 @@ fn test_stop_command() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Daemon not running. No apps to stop.",
+            "Daemon not running. Cannot stop application.",
         ));
 }

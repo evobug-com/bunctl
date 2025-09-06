@@ -316,6 +316,10 @@ mod tests {
                 }
             });
             handles.push(handle);
+
+            // On Windows, add small delay to allow server to create next pipe instance
+            #[cfg(windows)]
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
         // Wait for all clients
