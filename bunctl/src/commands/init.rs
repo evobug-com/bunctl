@@ -102,6 +102,9 @@ pub async fn execute(args: InitArgs) -> anyhow::Result<()> {
     println!("• Runtime:     {}", args.runtime);
     println!("• Memory:      {}", args.memory);
     println!("• CPU:         {}%", args.cpu);
+    if let Some(port) = args.port {
+        println!("• Port:        {}", port);
+    }
 
     if args.ecosystem {
         println!("• Config:      ecosystem.config.js");
@@ -247,5 +250,206 @@ fn format_memory(bytes: u64) -> String {
         format!("{}K", bytes / 1024)
     } else {
         format!("{}", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_parse_memory_string() {
+        assert_eq!(parse_memory_string(""), None);
+        assert_eq!(parse_memory_string("100"), Some(100));
+        assert_eq!(parse_memory_string("100K"), Some(100 * 1024));
+        assert_eq!(parse_memory_string("100k"), Some(100 * 1024));
+        assert_eq!(parse_memory_string("512M"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_memory_string("512m"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_memory_string("2G"), Some(2 * 1024 * 1024 * 1024));
+        assert_eq!(parse_memory_string("2g"), Some(2 * 1024 * 1024 * 1024));
+        assert_eq!(parse_memory_string("invalid"), None);
+        assert_eq!(parse_memory_string("100X"), None);
+    }
+
+    #[test]
+    fn test_format_memory() {
+        assert_eq!(format_memory(100), "100");
+        assert_eq!(format_memory(1024), "1K");
+        assert_eq!(format_memory(100 * 1024), "100K");
+        assert_eq!(format_memory(1024 * 1024), "1M");
+        assert_eq!(format_memory(512 * 1024 * 1024), "512M");
+        assert_eq!(format_memory(1024 * 1024 * 1024), "1G");
+        assert_eq!(format_memory(2 * 1024 * 1024 * 1024), "2G");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_generate_bunctl_config() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let app_config = AppConfig {
+            name: "test-app".to_string(),
+            command: "bun run server.ts".to_string(),
+            args: vec!["--port".to_string(), "3000".to_string()],
+            cwd: PathBuf::from("/app"),
+            env: {
+                let mut env = HashMap::new();
+                env.insert("NODE_ENV".to_string(), "production".to_string());
+                env.insert("PORT".to_string(), "3000".to_string());
+                env
+            },
+            auto_start: true,
+            restart_policy: bunctl_core::config::RestartPolicy::Always,
+            max_memory: Some(512 * 1024 * 1024),
+            max_cpu_percent: Some(50.0),
+            ..Default::default()
+        };
+
+        // Save current dir and change to temp directory to write config there
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        generate_bunctl_config(&app_config).await.unwrap();
+
+        // The config should be written in the current directory (temp_dir)
+        let config_path = temp_dir.path().join("bunctl.json");
+        assert!(config_path.exists());
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        let config: Config = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(config.apps.len(), 1);
+        assert_eq!(config.apps[0].name, "test-app");
+        assert_eq!(config.apps[0].command, "bun run server.ts");
+        assert_eq!(config.apps[0].args, vec!["--port", "3000"]);
+        assert_eq!(
+            config.apps[0].env.get("NODE_ENV"),
+            Some(&"production".to_string())
+        );
+        assert_eq!(config.apps[0].env.get("PORT"), Some(&"3000".to_string()));
+        assert!(config.apps[0].auto_start);
+        assert_eq!(config.apps[0].max_memory, Some(512 * 1024 * 1024));
+        assert_eq!(config.apps[0].max_cpu_percent, Some(50.0));
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_generate_ecosystem_config() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let app_config = AppConfig {
+            name: "eco-app".to_string(),
+            command: "bun run index.ts".to_string(),
+            args: vec![],
+            cwd: PathBuf::from("/app"),
+            env: {
+                let mut env = HashMap::new();
+                env.insert("NODE_ENV".to_string(), "production".to_string());
+                env
+            },
+            auto_start: false,
+            restart_policy: bunctl_core::config::RestartPolicy::OnFailure,
+            max_memory: Some(1024 * 1024 * 1024),
+            max_cpu_percent: None,
+            stdout_log: Some(PathBuf::from("logs/eco-app-out.log")),
+            stderr_log: Some(PathBuf::from("logs/eco-app-error.log")),
+            ..Default::default()
+        };
+
+        // Save current dir and change to temp directory to write config there
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        generate_ecosystem_config(&app_config, 1).await.unwrap();
+
+        let config_path = temp_dir.path().join("ecosystem.config.js");
+        assert!(config_path.exists());
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("module.exports"));
+        assert!(content.contains("eco-app"));
+        assert!(content.contains("index.ts"));
+        assert!(content.contains("NODE_ENV"));
+        assert!(content.contains("production"));
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_generate_ecosystem_config_cluster_mode() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let app_config = AppConfig {
+            name: "cluster-app".to_string(),
+            command: "bun run server.ts".to_string(),
+            args: vec![],
+            cwd: PathBuf::from("/app"),
+            env: HashMap::new(),
+            auto_start: true,
+            restart_policy: bunctl_core::config::RestartPolicy::Always,
+            ..Default::default()
+        };
+
+        // Save current dir and change to temp directory to write config there
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        generate_ecosystem_config(&app_config, 4).await.unwrap();
+
+        let config_path = temp_dir.path().join("ecosystem.config.js");
+        assert!(config_path.exists());
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        // The content is JavaScript, but contains JSON inside module.exports
+        // Check for the values without expecting exact JSON formatting
+        assert!(content.contains("\"instances\"") && content.contains("4"));
+        assert!(content.contains("\"exec_mode\"") && content.contains("\"cluster\""));
+        assert!(content.contains("\"autorestart\"") && content.contains("true"));
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
+    fn test_memory_parsing_edge_cases() {
+        // Test with whitespace
+        assert_eq!(parse_memory_string("  100M  "), Some(100 * 1024 * 1024));
+        assert_eq!(parse_memory_string("  1G  "), Some(1024 * 1024 * 1024));
+
+        // Test case insensitive
+        assert_eq!(parse_memory_string("100K"), Some(100 * 1024));
+        assert_eq!(parse_memory_string("100k"), Some(100 * 1024));
+        assert_eq!(parse_memory_string("100M"), Some(100 * 1024 * 1024));
+        assert_eq!(parse_memory_string("100m"), Some(100 * 1024 * 1024));
+        assert_eq!(parse_memory_string("100G"), Some(100 * 1024 * 1024 * 1024));
+        assert_eq!(parse_memory_string("100g"), Some(100 * 1024 * 1024 * 1024));
+
+        // Test invalid formats
+        assert_eq!(parse_memory_string("100MB"), None);
+        assert_eq!(parse_memory_string("100 M"), None);
+        assert_eq!(parse_memory_string("M100"), None);
+        assert_eq!(parse_memory_string("-100M"), None);
+        assert_eq!(parse_memory_string("100.5M"), None);
+    }
+
+    #[test]
+    fn test_format_memory_boundaries() {
+        // Test exact boundaries
+        assert_eq!(format_memory(1023), "1023");
+        assert_eq!(format_memory(1024), "1K");
+        assert_eq!(format_memory(1024 * 1023), "1023K");
+        assert_eq!(format_memory(1024 * 1024 - 1), "1023K");
+        assert_eq!(format_memory(1024 * 1024), "1M");
+        assert_eq!(format_memory(1024 * 1024 * 1023), "1023M");
+        assert_eq!(format_memory(1024 * 1024 * 1024 - 1), "1023M");
+        assert_eq!(format_memory(1024 * 1024 * 1024), "1G");
     }
 }
