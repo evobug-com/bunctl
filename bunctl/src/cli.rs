@@ -226,3 +226,194 @@ pub struct DaemonArgs {
     #[arg(short, long)]
     pub socket: Option<PathBuf>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_init_defaults() {
+        let cli = Cli::parse_from(["bunctl", "init"]);
+        match cli.command {
+            Command::Init(args) => {
+                assert_eq!(args.name, None);
+                assert_eq!(args.entry, None);
+                assert_eq!(args.script, None);
+                assert_eq!(args.port, None);
+                assert_eq!(args.cwd, None);
+                assert_eq!(args.memory, "512M");
+                assert_eq!(args.cpu, 50.0);
+                assert_eq!(args.runtime, "bun");
+                assert!(!args.autostart);
+                assert_eq!(args.instances, 1);
+                assert!(!args.ecosystem);
+                assert_eq!(args.from_ecosystem, None);
+            }
+            _ => panic!("Expected Init command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_init_with_all_args() {
+        let cli = Cli::parse_from([
+            "bunctl",
+            "init",
+            "--name",
+            "test-app",
+            "--entry",
+            "server.ts",
+            "--port",
+            "3000",
+            "--cwd",
+            "/app",
+            "--memory",
+            "1G",
+            "--cpu",
+            "75",
+            "--runtime",
+            "node",
+            "--autostart",
+            "--instances",
+            "4",
+            "--ecosystem",
+        ]);
+
+        match cli.command {
+            Command::Init(args) => {
+                assert_eq!(args.name, Some("test-app".to_string()));
+                assert_eq!(args.entry, Some(PathBuf::from("server.ts")));
+                assert_eq!(args.port, Some(3000));
+                assert_eq!(args.cwd, Some(PathBuf::from("/app")));
+                assert_eq!(args.memory, "1G");
+                assert_eq!(args.cpu, 75.0);
+                assert_eq!(args.runtime, "node");
+                assert!(args.autostart);
+                assert_eq!(args.instances, 4);
+                assert!(args.ecosystem);
+            }
+            _ => panic!("Expected Init command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_start_simple() {
+        let cli = Cli::parse_from(["bunctl", "start", "myapp"]);
+        match cli.command {
+            Command::Start(args) => {
+                assert_eq!(args.name, Some("myapp".to_string()));
+                assert_eq!(args.config, None);
+                assert_eq!(args.command, None);
+                assert_eq!(args.script, None);
+                assert_eq!(args.cwd, None);
+                assert!(args.env.is_empty());
+                assert!(!args.auto_restart);
+                assert_eq!(args.max_memory, None);
+                assert_eq!(args.max_cpu, None);
+                assert_eq!(args.uid, None);
+                assert_eq!(args.gid, None);
+            }
+            _ => panic!("Expected Start command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_start_with_config() {
+        let cli = Cli::parse_from(["bunctl", "start", "--config", "app.json", "myapp"]);
+        match cli.command {
+            Command::Start(args) => {
+                assert_eq!(args.name, Some("myapp".to_string()));
+                assert_eq!(args.config, Some(PathBuf::from("app.json")));
+            }
+            _ => panic!("Expected Start command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_stop_defaults() {
+        let cli = Cli::parse_from(["bunctl", "stop", "myapp"]);
+        match cli.command {
+            Command::Stop(args) => {
+                assert_eq!(args.name, "myapp");
+                assert_eq!(args.timeout, 10);
+            }
+            _ => panic!("Expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_restart_defaults() {
+        let cli = Cli::parse_from(["bunctl", "restart", "myapp"]);
+        match cli.command {
+            Command::Restart(args) => {
+                assert_eq!(args.name, "myapp");
+                assert!(!args.parallel);
+                assert_eq!(args.wait, 0);
+            }
+            _ => panic!("Expected Restart command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_status_no_args() {
+        let cli = Cli::parse_from(["bunctl", "status"]);
+        match cli.command {
+            Command::Status(args) => {
+                assert_eq!(args.name, None);
+                assert!(!args.json);
+                assert!(!args.watch);
+            }
+            _ => panic!("Expected Status command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_logs_defaults() {
+        let cli = Cli::parse_from(["bunctl", "logs"]);
+        match cli.command {
+            Command::Logs(args) => {
+                assert_eq!(args.name, None);
+                assert_eq!(args.lines, 20);
+                assert!(!args.timestamps);
+                assert!(!args.errors_first);
+                assert!(!args.no_colors);
+                assert!(!args.json);
+                assert!(!args.watch);
+            }
+            _ => panic!("Expected Logs command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_list() {
+        let cli = Cli::parse_from(["bunctl", "list"]);
+        match cli.command {
+            Command::List => {}
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_delete_simple() {
+        let cli = Cli::parse_from(["bunctl", "delete", "myapp"]);
+        match cli.command {
+            Command::Delete(args) => {
+                assert_eq!(args.name, "myapp");
+                assert!(!args.force);
+            }
+            _ => panic!("Expected Delete command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_daemon_no_args() {
+        let cli = Cli::parse_from(["bunctl", "daemon"]);
+        match cli.command {
+            Command::Daemon(args) => {
+                assert_eq!(args.config, None);
+                assert_eq!(args.socket, None);
+            }
+            _ => panic!("Expected Daemon command"),
+        }
+    }
+}

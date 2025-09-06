@@ -498,81 +498,6 @@ impl Daemon {
         });
     }
 
-    async fn capture_output<R>(
-        reader: R,
-        app_id: AppId,
-        log_manager: Arc<LogManager>,
-        stream_type: &str,
-        subscribers: Arc<DashMap<u64, Subscriber>>,
-    ) where
-        R: tokio::io::AsyncRead + Unpin,
-    {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-
-        let mut reader = BufReader::new(reader);
-        let mut line = String::new();
-
-        let writer = match log_manager.get_writer(&app_id).await {
-            Ok(w) => w,
-            Err(e) => {
-                error!("Failed to get log writer for {}: {}", app_id, e);
-                return;
-            }
-        };
-
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-                    let trimmed_line = line.trim_end();
-
-                    // Skip completely empty lines to reduce noise
-                    if !trimmed_line.is_empty() {
-                        let log_line = format!(
-                            "[{}] [{}] [{}] {}",
-                            app_id, timestamp, stream_type, trimmed_line
-                        );
-                        if let Err(e) = writer.write_line(&log_line) {
-                            error!("Failed to write log for {}: {}", app_id, e);
-                        }
-
-                        // Broadcast log event to subscribers
-                        let event_response = IpcResponse::Event {
-                            event_type: "log_line".to_string(),
-                            data: serde_json::json!({
-                                "app": app_id.to_string(),
-                                "stream": stream_type,
-                                "line": trimmed_line,
-                                "timestamp": timestamp.to_string()
-                            }),
-                        };
-
-                        // Remove disconnected subscribers while broadcasting
-                        let mut to_remove = Vec::new();
-                        for subscriber in subscribers.iter() {
-                            if subscriber.should_receive_event("log_line", &Some(app_id.clone()))
-                                && subscriber.sender.send(event_response.clone()).is_err()
-                            {
-                                to_remove.push(subscriber.id);
-                            }
-                        }
-
-                        // Clean up disconnected subscribers
-                        for id in to_remove {
-                            subscribers.remove(&id);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Error reading {} from {}: {}", stream_type, app_id, e);
-                    break;
-                }
-            }
-        }
-    }
-
     async fn capture_output_simple<R>(
         reader: R,
         app_id: AppId,
@@ -1075,6 +1000,7 @@ impl Daemon {
         }
     }
 
+    #[allow(dead_code)]
     async fn reload_config(&self) -> anyhow::Result<()> {
         if let Some(ref watcher) = self.config_watcher {
             let config = watcher.get();
@@ -1093,6 +1019,7 @@ impl Daemon {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn perform_health_checks(&self) {
         for app in self.apps.iter() {
             if app.get_state() == AppState::Running
@@ -1144,7 +1071,7 @@ impl Daemon {
         {
             tokio::spawn(async move {
                 // On Windows, use ctrl_c for graceful shutdown
-                if let Ok(_) = tokio::signal::ctrl_c().await {
+                if (tokio::signal::ctrl_c().await).is_ok() {
                     info!("Received Ctrl+C signal");
                     let _ = shutdown_tx.send(()).await;
                 }
@@ -1188,7 +1115,7 @@ impl Daemon {
                                     let response = IpcResponse::Success {
                                         message: "Subscribed to events".to_string(),
                                     };
-                                    if let Err(_) = connection.send(&response).await {
+                                    if (connection.send(&response).await).is_err() {
                                         break;
                                     }
                                 }
@@ -1201,13 +1128,13 @@ impl Daemon {
                                     let response = IpcResponse::Success {
                                         message: "Unsubscribed from events".to_string(),
                                     };
-                                    if let Err(_) = connection.send(&response).await {
+                                    if (connection.send(&response).await).is_err() {
                                         break;
                                     }
                                 }
                                 _ => {
                                     let response = Self::handle_ipc_message(msg, &apps, &supervisor, &log_manager, &subscribers).await;
-                                    if let Err(_) = connection.send(&response).await {
+                                    if (connection.send(&response).await).is_err() {
                                         break;
                                     }
                                 }
@@ -1227,7 +1154,7 @@ impl Daemon {
 
                 Some(event) = event_rx.recv() => {
                     // Forward event to the client
-                    if let Err(_) = connection.send(&event).await {
+                    if (connection.send(&event).await).is_err() {
                         break;
                     }
                 }

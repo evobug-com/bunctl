@@ -191,9 +191,9 @@ impl DaemonConfig {
         let config: DaemonConfig = serde_json::from_str(&content)
             .map_err(|e| crate::Error::Config(format!("Failed to parse daemon config: {}", e)))?;
 
-        validate_log_level(&config.log_level).map_err(|e| crate::Error::Config(e))?;
+        validate_log_level(&config.log_level).map_err(crate::Error::Config)?;
 
-        validate_daemon_config(&config).map_err(|e| crate::Error::Config(e))?;
+        validate_daemon_config(&config).map_err(crate::Error::Config)?;
 
         Ok(config)
     }
@@ -239,13 +239,13 @@ impl ConfigWatcher {
                 .map_err(|e| crate::Error::Config(format!("App '{}': {}", app.name, e)))?;
 
             // Validate numeric ranges
-            if let Some(cpu) = app.max_cpu_percent {
-                if cpu <= 0.0 {
-                    return Err(crate::Error::Config(format!(
-                        "App '{}': max_cpu_percent must be greater than 0.0, got {}",
-                        app.name, cpu
-                    )));
-                }
+            if let Some(cpu) = app.max_cpu_percent
+                && cpu <= 0.0
+            {
+                return Err(crate::Error::Config(format!(
+                    "App '{}': max_cpu_percent must be greater than 0.0, got {}",
+                    app.name, cpu
+                )));
             }
 
             if app.backoff.multiplier < 1.0 {
@@ -361,10 +361,10 @@ fn validate_daemon_config(daemon: &DaemonConfig) -> Result<(), String> {
     }
 
     // Validate metrics port if specified
-    if let Some(port) = daemon.metrics_port {
-        if port < 1024 {
-            return Err("metrics_port should be >= 1024 to avoid privileged ports".to_string());
-        }
+    if let Some(port) = daemon.metrics_port
+        && port < 1024
+    {
+        return Err("metrics_port should be >= 1024 to avoid privileged ports".to_string());
     }
 
     // Validate socket path is not empty
