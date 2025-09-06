@@ -110,18 +110,17 @@ async fn test_config_with_supervisor() {
         apps: vec![
             AppConfig {
                 name: "app1".to_string(),
-                command: "echo".to_string(),
-                args: vec!["app1".to_string()],
+                command: "cmd".to_string(),
+                args: vec!["/c".to_string(), "echo".to_string(), "app1".to_string()],
                 ..Default::default()
             },
             AppConfig {
                 name: "app2".to_string(),
-                command: "echo".to_string(),
-                args: vec!["app2".to_string()],
+                command: "cmd".to_string(),
+                args: vec!["/c".to_string(), "echo".to_string(), "app2".to_string()],
                 ..Default::default()
             },
         ],
-        daemon: Default::default(),
     };
 
     let supervisor = create_supervisor().await.unwrap();

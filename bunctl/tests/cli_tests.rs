@@ -118,7 +118,7 @@ fn test_list_command() {
     cmd.arg("list")
         .assert()
         .success()
-        .stdout(predicate::str::contains("No apps"));
+        .stdout(predicate::str::contains("No daemon running"));
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn test_status_command() {
     cmd.arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("No apps"));
+        .stdout(predicate::str::contains("No daemon running"));
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn test_status_json() {
     cmd.args(["status", "--json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("{}"));
+        .stdout(predicate::str::contains("[]"));
 }
 
 #[test]
@@ -158,7 +158,9 @@ fn test_delete_nonexistent() {
     cmd.args(["delete", "nonexistent"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Deleted app nonexistent"));
+        .stdout(predicate::str::contains(
+            "Are you sure you want to delete app 'nonexistent'?",
+        ));
 }
 
 #[test]
@@ -167,8 +169,10 @@ fn test_logs_command() {
 
     cmd.args(["logs", "test-app"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Showing logs for test-app"));
+        .failure()
+        .stderr(predicate::str::contains(
+            "Daemon not running. No logs available.",
+        ));
 }
 
 #[test]
@@ -177,8 +181,10 @@ fn test_restart_command() {
 
     cmd.args(["restart", "test-app"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Restarted app test-app"));
+        .failure()
+        .stderr(predicate::str::contains(
+            "Daemon not running. No apps to restart.",
+        ));
 }
 
 #[test]
@@ -187,6 +193,8 @@ fn test_stop_command() {
 
     cmd.args(["stop", "test-app"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Stopped app test-app"));
+        .failure()
+        .stderr(predicate::str::contains(
+            "Daemon not running. No apps to stop.",
+        ));
 }

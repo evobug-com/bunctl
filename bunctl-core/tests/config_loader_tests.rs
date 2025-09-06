@@ -21,12 +21,7 @@ async fn test_load_bunctl_json() {
                 "max_memory": 536870912,
                 "max_cpu_percent": 50.0
             }
-        ],
-        "daemon": {
-            "socket_path": "/tmp/bunctl.sock",
-            "log_level": "info",
-            "max_parallel_starts": 4
-        }
+        ]
     }"#;
 
     std::fs::write(&config_path, config).unwrap();
