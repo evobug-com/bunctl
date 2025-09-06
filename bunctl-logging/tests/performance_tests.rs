@@ -431,6 +431,7 @@ async fn test_stress_test_memory_stability() {
 }
 
 #[tokio::test]
+#[ignore = "Performance test - run with --ignored flag"]
 async fn benchmark_line_buffer_operations() {
     let config = LineBufferConfig {
         max_size: 8192,
