@@ -11,6 +11,8 @@ fn test_registry_register_and_get() {
         pid: 1234,
         app_id: app_id.clone(),
         inner: None,
+        stdout: None,
+        stderr: None,
     };
 
     registry.register(app_id.clone(), handle);
@@ -29,6 +31,8 @@ fn test_registry_unregister() {
         pid: 1234,
         app_id: app_id.clone(),
         inner: None,
+        stdout: None,
+        stderr: None,
     };
 
     registry.register(app_id.clone(), handle);
@@ -50,6 +54,8 @@ fn test_registry_get_by_pid() {
         pid: 5678,
         app_id: app_id.clone(),
         inner: None,
+        stdout: None,
+        stderr: None,
     };
 
     registry.register(app_id.clone(), handle);
@@ -75,6 +81,8 @@ fn test_registry_list() {
             pid: 100,
             app_id: app1.clone(),
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
 
@@ -84,6 +92,8 @@ fn test_registry_list() {
             pid: 200,
             app_id: app2.clone(),
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
 
@@ -93,6 +103,8 @@ fn test_registry_list() {
             pid: 300,
             app_id: app3.clone(),
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
 
@@ -118,6 +130,8 @@ fn test_registry_count() {
             pid: 100,
             app_id: app1,
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
     assert_eq!(registry.count(), 1);
@@ -129,6 +143,8 @@ fn test_registry_count() {
             pid: 200,
             app_id: app2,
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
     assert_eq!(registry.count(), 2);
@@ -160,6 +176,8 @@ fn test_registry_concurrent_access() {
                     pid: i as u32,
                     app_id,
                     inner: None,
+                    stdout: None,
+                    stderr: None,
                 },
             );
         });
@@ -186,6 +204,8 @@ fn test_registry_overwrite() {
             pid: 1111,
             app_id: app_id.clone(),
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
 
@@ -198,6 +218,8 @@ fn test_registry_overwrite() {
             pid: 2222,
             app_id: app_id.clone(),
             inner: None,
+            stdout: None,
+            stderr: None,
         },
     );
 
