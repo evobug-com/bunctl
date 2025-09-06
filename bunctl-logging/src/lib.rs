@@ -155,37 +155,40 @@ impl LogManager {
     pub async fn read_logs(&self, app_id: &AppId, lines: usize) -> Result<Vec<String>> {
         let log_path = self.config.base_dir.join(format!("{}.log", app_id));
 
-        if !log_path.exists() {
-            // Return a helpful message instead of empty array
-            return Ok(vec![
-                format!("No log file found for app '{}' at {:?}", app_id, log_path),
-                "This could mean:".to_string(),
-                "1. The app hasn't produced any output yet".to_string(),
-                "2. The app was started without a daemon (logs only work with daemon mode)"
-                    .to_string(),
-                "3. Log directory permissions issue".to_string(),
-            ]);
-        }
+        // Read the log file
+        use tokio::fs::File;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let file = match File::open(&log_path).await {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Return a helpful message for missing files
+                return Ok(vec![
+                    format!("No log file found for app '{}' at {:?}", app_id, log_path),
+                    "This could mean:".to_string(),
+                    "1. The app hasn't produced any output yet".to_string(),
+                    "2. The app was started without a daemon (logs only work with daemon mode)"
+                        .to_string(),
+                    "3. Log directory permissions issue".to_string(),
+                ]);
+            }
+            Err(e) => {
+                // Preserve the original error kind
+                return Err(bunctl_core::Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Cannot open log file {:?}: {}", log_path, e),
+                )));
+            }
+        };
 
         // Check if log file is empty
-        let metadata = tokio::fs::metadata(&log_path).await?;
+        let metadata = file.metadata().await?;
         if metadata.len() == 0 {
             return Ok(vec![format!(
                 "Log file for '{}' exists but is empty",
                 app_id
             )]);
         }
-
-        // Read the log file
-        use tokio::fs::File;
-        use tokio::io::{AsyncBufReadExt, BufReader};
-
-        let file = File::open(&log_path).await.map_err(|e| {
-            bunctl_core::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!("Cannot open log file {:?}: {}", log_path, e),
-            ))
-        })?;
 
         let reader = BufReader::new(file);
         let mut all_lines = Vec::new();
@@ -219,32 +222,36 @@ impl LogManager {
     ) -> Result<StructuredLogs> {
         let log_path = self.config.base_dir.join(format!("{}.log", app_id));
 
-        if !log_path.exists() {
-            return Ok(StructuredLogs {
-                errors: vec![format!("No log file found for app '{}'", app_id)],
-                output: vec![],
-            });
-        }
+        // Read and parse the log file
+        use tokio::fs::File;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let file = match File::open(&log_path).await {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Return structured error for missing files
+                return Ok(StructuredLogs {
+                    errors: vec![format!("No log file found for app '{}'", app_id)],
+                    output: vec![],
+                });
+            }
+            Err(e) => {
+                // Preserve the original error kind
+                return Err(bunctl_core::Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Cannot open log file {:?}: {}", log_path, e),
+                )));
+            }
+        };
 
         // Check if log file is empty
-        let metadata = tokio::fs::metadata(&log_path).await?;
+        let metadata = file.metadata().await?;
         if metadata.len() == 0 {
             return Ok(StructuredLogs {
                 errors: vec![],
                 output: vec![format!("Log file for '{}' exists but is empty", app_id)],
             });
         }
-
-        // Read and parse the log file
-        use tokio::fs::File;
-        use tokio::io::{AsyncBufReadExt, BufReader};
-
-        let file = File::open(&log_path).await.map_err(|e| {
-            bunctl_core::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!("Cannot open log file {:?}: {}", log_path, e),
-            ))
-        })?;
 
         let reader = BufReader::new(file);
         let mut all_lines = Vec::new();
