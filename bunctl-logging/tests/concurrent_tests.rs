@@ -238,7 +238,7 @@ async fn test_stress_concurrent_read_write() {
 
     // Initialize the writer first to ensure log file exists before readers start
     let initial_writer = manager.get_writer(&app_id).await.unwrap();
-    initial_writer.write_line("Test started").unwrap();
+    initial_writer.write_line("Writer init - Entry 0").unwrap();
     initial_writer.flush().await.unwrap();
     drop(initial_writer);
 
