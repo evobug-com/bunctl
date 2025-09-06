@@ -1,13 +1,12 @@
 use crate::{LineBuffer, LineBufferConfig, LogRotation, RotationConfig};
 use bunctl_core::Result;
 use bytes::Bytes;
-use crossbeam_channel::{Sender, bounded};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time;
 
 #[derive(Debug, Clone)]
@@ -18,18 +17,31 @@ pub struct LogWriterConfig {
     pub flush_interval: Duration,
 }
 
-#[derive(Debug)]
 pub struct LogWriter {
     _path: PathBuf,
     file: Arc<Mutex<BufWriter<File>>>,
     rotation: Arc<Mutex<LogRotation>>,
     buffer: Arc<LineBuffer>,
-    tx: Sender<LogCommand>,
+    tx: mpsc::Sender<LogCommand>,
+    shutdown_rx: Option<oneshot::Receiver<()>>,
+}
+
+impl std::fmt::Debug for LogWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogWriter")
+            .field("_path", &self._path)
+            .field("file", &"<BufWriter>")
+            .field("rotation", &"<LogRotation>")
+            .field("buffer", &"<LineBuffer>")
+            .field("tx", &"<Sender>")
+            .field("shutdown_rx", &"<Receiver>")
+            .finish()
+    }
 }
 
 enum LogCommand {
     Write(Bytes),
-    Flush,
+    FlushAndWait(oneshot::Sender<()>),
     Rotate,
     Close,
 }
@@ -38,6 +50,7 @@ impl LogWriter {
     pub async fn new(config: LogWriterConfig) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
+            .write(true)
             .append(true)
             .open(&config.path)
             .await?;
@@ -49,7 +62,8 @@ impl LogWriter {
             max_lines: 1000,
         });
 
-        let (tx, rx) = bounded::<LogCommand>(10000);
+        let (tx, mut rx) = mpsc::channel::<LogCommand>(10000);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let writer = Self {
             _path: config.path.clone(),
@@ -57,6 +71,7 @@ impl LogWriter {
             rotation: Arc::new(Mutex::new(rotation)),
             buffer: Arc::new(buffer),
             tx,
+            shutdown_rx: Some(shutdown_rx),
         };
 
         let file_clone = writer.file.clone();
@@ -75,29 +90,30 @@ impl LogWriter {
                             Self::flush_buffer(&buffer_clone, &file_clone).await.ok();
                         }
                     }
-                    cmd = tokio::task::spawn_blocking({
-                        let rx = rx.clone();
-                        move || rx.recv()
-                    }) => {
+                    Some(cmd) = rx.recv() => {
                         match cmd {
-                            Ok(Ok(LogCommand::Write(data))) => {
+                            LogCommand::Write(data) => {
                                 buffer_clone.write(&data);
                             }
-                            Ok(Ok(LogCommand::Flush)) => {
+                            LogCommand::FlushAndWait(done_tx) => {
                                 Self::flush_buffer(&buffer_clone, &file_clone).await.ok();
+                                // Signal that flush is complete
+                                let _ = done_tx.send(());
                             }
-                            Ok(Ok(LogCommand::Rotate)) => {
+                            LogCommand::Rotate => {
                                 Self::rotate_file(&path_clone, &file_clone, &rotation_clone).await.ok();
                             }
-                            Ok(Ok(LogCommand::Close)) => {
+                            LogCommand::Close => {
                                 Self::flush_buffer(&buffer_clone, &file_clone).await.ok();
                                 break;
                             }
-                            _ => {}
                         }
                     }
                 }
             }
+
+            // Signal that the background task has completed
+            let _ = shutdown_tx.send(());
         });
 
         Ok(writer)
@@ -108,7 +124,9 @@ impl LogWriter {
         file: &Arc<Mutex<BufWriter<File>>>,
     ) -> Result<()> {
         let lines = buffer.get_lines();
-        if lines.is_empty() {
+        let has_incomplete = !buffer.is_empty(); // Check before draining
+
+        if lines.is_empty() && !has_incomplete {
             return Ok(());
         }
 
@@ -123,6 +141,8 @@ impl LogWriter {
         }
 
         file.flush().await?;
+        file.get_mut().sync_all().await?; // Force sync to disk
+
         Ok(())
     }
 
@@ -140,6 +160,7 @@ impl LogWriter {
 
         let new_file = OpenOptions::new()
             .create(true)
+            .write(true)
             .append(true)
             .open(path)
             .await?;
@@ -151,9 +172,12 @@ impl LogWriter {
     }
 
     pub fn write(&self, data: impl Into<Bytes>) -> Result<()> {
-        self.tx.send(LogCommand::Write(data.into())).map_err(|e| {
-            bunctl_core::Error::Other(anyhow::anyhow!("Failed to send log command: {}", e))
-        })
+        // Use try_send for non-blocking write
+        self.tx
+            .try_send(LogCommand::Write(data.into()))
+            .map_err(|e| {
+                bunctl_core::Error::Other(anyhow::anyhow!("Failed to send log command: {}", e))
+            })
     }
 
     pub fn write_line(&self, line: impl AsRef<str>) -> Result<()> {
@@ -165,26 +189,71 @@ impl LogWriter {
     }
 
     pub async fn flush(&self) -> Result<()> {
-        self.tx.send(LogCommand::Flush).map_err(|e| {
-            bunctl_core::Error::Other(anyhow::anyhow!("Failed to send flush command: {}", e))
-        })?;
-        time::sleep(Duration::from_millis(10)).await;
-        Ok(())
+        // Create a oneshot channel to wait for flush completion
+        let (done_tx, done_rx) = oneshot::channel();
+
+        // Send flush command with completion notification
+        self.tx
+            .send(LogCommand::FlushAndWait(done_tx))
+            .await
+            .map_err(|e| {
+                bunctl_core::Error::Other(anyhow::anyhow!("Failed to send flush command: {}", e))
+            })?;
+
+        // Wait for flush to complete (with timeout)
+        match tokio::time::timeout(Duration::from_secs(1), done_rx).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => {
+                // Channel was dropped
+                Err(bunctl_core::Error::Other(anyhow::anyhow!(
+                    "Flush operation failed"
+                )))
+            }
+            Err(_) => {
+                // Timeout
+                Err(bunctl_core::Error::Other(anyhow::anyhow!(
+                    "Flush operation timed out"
+                )))
+            }
+        }
     }
 
     pub async fn rotate(&self) -> Result<()> {
-        self.tx.send(LogCommand::Rotate).map_err(|e| {
+        self.tx.send(LogCommand::Rotate).await.map_err(|e| {
             bunctl_core::Error::Other(anyhow::anyhow!("Failed to send rotate command: {}", e))
         })?;
+        // Give time for rotation to process
         time::sleep(Duration::from_millis(10)).await;
         Ok(())
     }
 
-    pub async fn close(self) -> Result<()> {
-        self.tx.send(LogCommand::Close).map_err(|e| {
+    pub async fn close(mut self) -> Result<()> {
+        // Send close command to the background task
+        self.tx.send(LogCommand::Close).await.map_err(|e| {
             bunctl_core::Error::Other(anyhow::anyhow!("Failed to send close command: {}", e))
         })?;
-        time::sleep(Duration::from_millis(100)).await;
+
+        // Force a flush of the buffer before closing
+        let _ = Self::flush_buffer(&self.buffer, &self.file).await;
+
+        // Wait for the background task to actually finish
+        if let Some(shutdown_rx) = self.shutdown_rx.take() {
+            // Wait for the shutdown signal with a timeout
+            match tokio::time::timeout(Duration::from_secs(5), shutdown_rx).await {
+                Ok(Ok(())) => {
+                    // Background task completed successfully
+                }
+                Ok(Err(_)) => {
+                    // Channel was dropped without sending (shouldn't happen)
+                    eprintln!("Warning: LogWriter background task ended unexpectedly");
+                }
+                Err(_) => {
+                    // Timeout - background task didn't finish in time
+                    eprintln!("Warning: LogWriter background task didn't finish within timeout");
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -218,6 +287,26 @@ impl AsyncLogWriter {
     }
 
     pub async fn close(self) -> Result<()> {
-        Ok(())
+        // Get the inner Arc and try to get the owned LogWriter
+        // If we're the only reference, we can close it properly
+        match std::sync::Arc::try_unwrap(self.inner) {
+            Ok(inner) => inner.close().await,
+            Err(arc) => {
+                // If there are other references, we can't take ownership to call close()
+                // Just send the close command - the background task will clean up eventually
+                arc.tx.send(LogCommand::Close).await.map_err(|e| {
+                    bunctl_core::Error::Other(anyhow::anyhow!(
+                        "Failed to send close command: {}",
+                        e
+                    ))
+                })?;
+                // Note: We can't wait for completion here since we don't own the shutdown_rx
+                // This is a design limitation when there are multiple references
+                eprintln!(
+                    "Warning: AsyncLogWriter has multiple references, cannot wait for clean shutdown"
+                );
+                Ok(())
+            }
+        }
     }
 }

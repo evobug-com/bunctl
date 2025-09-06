@@ -98,12 +98,13 @@ async fn test_linux_supervisor_signal_handling() {
     let supervisor = create_supervisor().await.unwrap();
 
     // Test SIGTERM handling
+    // Use a while loop instead of sleep to stay in the main shell process
     let config = AppConfig {
         name: "signal-test".to_string(),
         command: "sh".to_string(),
         args: vec![
             "-c".to_string(),
-            "trap 'echo SIGTERM received; exit 0' TERM; sleep 10".to_string(),
+            "trap 'exit 0' TERM; while true; do sleep 0.1; done".to_string(),
         ],
         cwd: PathBuf::from("."),
         ..Default::default()
@@ -111,13 +112,21 @@ async fn test_linux_supervisor_signal_handling() {
 
     let mut handle = supervisor.spawn(&config).await.unwrap();
 
+    // Give the shell time to set up the trap handler
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     // Send graceful stop (SIGTERM)
     let status = supervisor
         .graceful_stop(&mut handle, Duration::from_secs(2))
         .await
         .unwrap();
 
-    assert!(status.code() == Some(0));
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Expected exit code 0 from trapped SIGTERM, got {:?}",
+        status.code()
+    );
 }
 
 #[tokio::test]

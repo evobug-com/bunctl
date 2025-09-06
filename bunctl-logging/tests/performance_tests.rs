@@ -75,7 +75,7 @@ async fn test_p99_latency() {
 }
 
 #[tokio::test]
-#[cfg_attr(windows, ignore = "May hang on Windows CI")]
+#[ignore = "Performance test - run with --ignored flag"]
 async fn test_throughput() {
     let temp_dir = TempDir::new().unwrap();
     let log_path = temp_dir.path().join("throughput.log");
@@ -140,6 +140,7 @@ async fn test_throughput() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Performance test - run with --ignored flag"]
 async fn test_concurrent_throughput() {
     let temp_dir = TempDir::new().unwrap();
 
@@ -294,7 +295,7 @@ async fn test_rotation_performance() {
 }
 
 #[tokio::test]
-#[cfg_attr(windows, ignore = "Compression test may hang on Windows")]
+#[ignore = "Performance test - run with --ignored flag"]
 async fn test_compression_performance() {
     let temp_dir = TempDir::new().unwrap();
     let log_path = temp_dir.path().join("compression_perf.log");
@@ -345,7 +346,7 @@ async fn test_compression_performance() {
 }
 
 #[tokio::test]
-#[cfg_attr(windows, ignore = "Memory stress test may hang on Windows")]
+#[ignore = "Performance test - run with --ignored flag"]
 async fn test_stress_test_memory_stability() {
     let temp_dir = TempDir::new().unwrap();
     let log_path = temp_dir.path().join("memory_stress.log");

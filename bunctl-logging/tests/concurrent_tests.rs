@@ -175,8 +175,53 @@ async fn test_log_manager_concurrent_writers() {
     }
 }
 
+#[tokio::test]
+async fn test_minimal_write() {
+    use tokio::fs;
+
+    let temp_dir = TempDir::new().unwrap();
+    let config = LogConfig {
+        base_dir: temp_dir.path().to_path_buf(),
+        max_file_size: 1024 * 1024,
+        max_files: 5,
+        compression: false,
+        buffer_size: 4096,
+        flush_interval_ms: 100,
+    };
+
+    let manager = Arc::new(LogManager::new(config));
+    let app_id = bunctl_core::AppId::new("test-app").unwrap();
+
+    // Get a writer
+    let writer = manager.get_writer(&app_id).await.unwrap();
+
+    // Write some data
+    for i in 0..10 {
+        writer.write_line(&format!("Test line {}", i)).unwrap();
+    }
+
+    println!("Wrote 10 lines");
+
+    // Flush
+    writer.flush().await.unwrap();
+    println!("Flushed");
+
+    // Remove the writer to close it
+    manager.remove_writer(&app_id).await.unwrap();
+    println!("Removed writer");
+
+    // Check the file
+    let log_path = temp_dir.path().join(format!("{}.log", app_id));
+    if log_path.exists() {
+        let content = fs::read_to_string(&log_path).await.unwrap();
+        println!("File content: {:?}", content);
+        assert!(!content.is_empty(), "File should not be empty");
+    } else {
+        panic!("Log file does not exist");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(windows, ignore = "Flaky on Windows due to file handle contention")]
 async fn test_stress_concurrent_read_write() {
     let temp_dir = TempDir::new().unwrap();
     let config = LogConfig {
@@ -200,20 +245,30 @@ async fn test_stress_concurrent_read_write() {
         let manager_clone = manager.clone();
         let app_id_clone = app_id.clone();
         let handle = task::spawn(async move {
-            let writer = manager_clone.get_writer(&app_id_clone).await.unwrap();
             let mut count = 0;
 
             while start.elapsed() < duration {
-                let line = format!("Writer {} - Entry {}", writer_id, count);
-                writer.write_line(&line).unwrap();
-                count += 1;
+                // Get writer for each batch of writes
+                let writer = manager_clone.get_writer(&app_id_clone).await.unwrap();
 
-                if count % 50 == 0 {
-                    tokio::time::sleep(Duration::from_micros(100)).await;
+                // Write a batch
+                for _ in 0..50 {
+                    if start.elapsed() >= duration {
+                        break;
+                    }
+                    let line = format!("Writer {} - Entry {}", writer_id, count);
+                    writer.write_line(&line).unwrap();
+                    count += 1;
                 }
+
+                // Flush after each batch
+                writer.flush().await.unwrap();
+                // Drop the writer reference
+                drop(writer);
+
+                tokio::time::sleep(Duration::from_micros(100)).await;
             }
 
-            writer.flush().await.unwrap();
             count
         });
         handles.push(handle);
@@ -263,25 +318,39 @@ async fn test_stress_concurrent_read_write() {
         }
     }
 
-    // Final flush and verify
+    // Final flush and close all writers properly
     manager.flush_all().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    manager.remove_writer(&app_id).await.unwrap();
 
-    // Read final state
-    let final_logs = manager.read_logs(&app_id, 10000).await.unwrap();
+    // Give a moment for file operations to complete
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Should have captured a significant portion of writes
-    assert!(final_logs.len() > 0, "No logs were captured");
+    // Check the main log file and any rotated files
+    let mut total_log_size = 0;
+    let mut all_logs = Vec::new();
 
-    // Verify log integrity - skip validation messages from LogManager
-    for log in &final_logs {
-        // Skip informational messages that LogManager adds
-        if log.contains("No log file found") || log.contains("This could mean") {
-            continue;
+    if let Ok(entries) = std::fs::read_dir(temp_dir.path()) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.to_string_lossy().contains(&app_id.to_string()) {
+                    if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                        total_log_size += content.len();
+                        all_logs.extend(content.lines().map(|s| s.to_string()));
+                    }
+                }
+            }
         }
-        // Actual log lines should contain expected content
+    }
+    // Should have captured a significant portion of writes across all files
+    assert!(all_logs.len() > 0, "No logs were captured");
+    assert!(total_log_size > 0, "No log data was written");
+
+    // Verify log integrity
+    for log in &all_logs {
+        // All log lines should contain expected content
         assert!(
-            log.contains("Writer") || log.contains("Entry"),
+            log.contains("Writer") && log.contains("Entry"),
             "Unexpected log content: {}",
             log
         );

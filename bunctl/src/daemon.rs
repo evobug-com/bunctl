@@ -742,7 +742,7 @@ impl Daemon {
             warn!("Backoff exhausted for app {}", app.id);
 
             // Clean up log writer to prevent resource leak
-            log_manager.remove_writer(&app.id).await;
+            let _ = log_manager.remove_writer(&app.id).await;
 
             // Handle exhausted action based on configuration
             match config.backoff.exhausted_action {
@@ -787,7 +787,7 @@ impl Daemon {
             app.set_state(AppState::Stopped);
 
             // Clean up log writer when app stops
-            log_manager.remove_writer(&app.id).await;
+            let _ = log_manager.remove_writer(&app.id).await;
 
             // Broadcast stopped state
             Self::broadcast_event_static(
@@ -879,12 +879,12 @@ impl Daemon {
             app.set_state(AppState::Stopped);
 
             // Clean up log writer to prevent resource leak
-            log_manager.remove_writer(&app.id).await;
+            let _ = log_manager.remove_writer(&app.id).await;
         } else {
             app.set_state(AppState::Stopped);
 
             // Clean up log writer when app stops
-            log_manager.remove_writer(&app.id).await;
+            let _ = log_manager.remove_writer(&app.id).await;
         }
     }
 

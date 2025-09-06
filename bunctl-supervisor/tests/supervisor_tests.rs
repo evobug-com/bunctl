@@ -1,4 +1,4 @@
-use bunctl_core::{AppConfig, AppId, SupervisorEvent};
+use bunctl_core::AppConfig;
 use bunctl_supervisor::create_supervisor;
 use std::path::PathBuf;
 use std::sync::Arc;

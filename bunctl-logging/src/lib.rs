@@ -97,10 +97,21 @@ impl LogManager {
         Ok(writer)
     }
 
-    pub async fn remove_writer(&self, app_id: &AppId) {
+    pub async fn remove_writer(&self, app_id: &AppId) -> Result<()> {
         if let Some((_, writer)) = self.writers.remove(app_id) {
-            let _ = writer.flush().await;
+            // Try to get the owned writer if we're the only reference
+            match Arc::try_unwrap(writer) {
+                Ok(writer) => {
+                    // We own it, can close properly
+                    writer.close().await?;
+                }
+                Err(arc) => {
+                    // Still other references, at least flush
+                    arc.flush().await?;
+                }
+            }
         }
+        Ok(())
     }
 
     pub async fn flush_all(&self) -> Result<()> {
@@ -113,6 +124,20 @@ impl LogManager {
     pub async fn rotate_all(&self) -> Result<()> {
         for writer in self.writers.iter() {
             writer.rotate().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn close_all(&self) -> Result<()> {
+        // Remove all writers and close them
+        let writers: Vec<_> = self
+            .writers
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for app_id in writers {
+            self.remove_writer(&app_id).await?;
         }
         Ok(())
     }

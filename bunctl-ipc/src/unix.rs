@@ -11,7 +11,7 @@ impl IpcServer {
     pub async fn bind(path: impl AsRef<Path>) -> bunctl_core::Result<Self> {
         let path = path.as_ref();
         let _ = std::fs::remove_file(path);
-        let listener = UnixListener::bind(path).map_err(|e| bunctl_core::Error::Io(e))?;
+        let listener = UnixListener::bind(path).map_err(bunctl_core::Error::Io)?;
         Ok(Self { listener })
     }
 
@@ -20,7 +20,7 @@ impl IpcServer {
             .listener
             .accept()
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
         Ok(IpcConnection { stream })
     }
 }
@@ -35,14 +35,14 @@ impl IpcConnection {
         self.stream
             .read_exact(&mut len_bytes)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
 
         let len = u32::from_le_bytes(len_bytes) as usize;
         let mut buffer = vec![0u8; len];
         self.stream
             .read_exact(&mut buffer)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
 
         serde_json::from_slice(&buffer).map_err(|e| bunctl_core::Error::Other(e.into()))
     }
@@ -54,15 +54,12 @@ impl IpcConnection {
         self.stream
             .write_all(&len)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
         self.stream
             .write_all(&data)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
-        self.stream
-            .flush()
-            .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
+        self.stream.flush().await.map_err(bunctl_core::Error::Io)?;
 
         Ok(())
     }
@@ -76,7 +73,7 @@ impl IpcClient {
     pub async fn connect(path: impl AsRef<Path>) -> bunctl_core::Result<Self> {
         let stream = UnixStream::connect(path)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
         Ok(Self { stream })
     }
 
@@ -87,15 +84,12 @@ impl IpcClient {
         self.stream
             .write_all(&len)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
         self.stream
             .write_all(&data)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
-        self.stream
-            .flush()
-            .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
+        self.stream.flush().await.map_err(bunctl_core::Error::Io)?;
 
         Ok(())
     }
@@ -105,14 +99,14 @@ impl IpcClient {
         self.stream
             .read_exact(&mut len_bytes)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
 
         let len = u32::from_le_bytes(len_bytes) as usize;
         let mut buffer = vec![0u8; len];
         self.stream
             .read_exact(&mut buffer)
             .await
-            .map_err(|e| bunctl_core::Error::Io(e))?;
+            .map_err(bunctl_core::Error::Io)?;
 
         serde_json::from_slice(&buffer).map_err(|e| bunctl_core::Error::Other(e.into()))
     }
