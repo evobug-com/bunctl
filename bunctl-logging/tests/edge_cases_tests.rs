@@ -167,18 +167,28 @@ async fn test_unicode_and_special_chars() {
         .unwrap();
 
     writer.flush().await.unwrap();
-    writer.close().await.unwrap(); // Properly close the writer and wait for background task
-    tokio::time::sleep(Duration::from_millis(100)).await; // Small delay to ensure file is written
+    writer.close().await.unwrap(); // Properly close the writer - this now waits for background task
 
-    let content = fs::read_to_string(&log_path).await.unwrap();
+    // Check if file exists first
+    assert!(log_path.exists(), "Log file was not created");
+
+    let content = fs::read_to_string(&log_path).await.unwrap_or_else(|e| {
+        panic!("Failed to read log file: {}", e);
+    });
 
     // Verify all special characters are preserved
-    assert!(content.contains("你好世界"));
-    assert!(content.contains("こんにちは世界"));
-    assert!(content.contains("مرحبا بالعالم"));
-    assert!(content.contains("🌍🌎🌏"));
-    assert!(content.contains("∑∏∫√∞"));
-    assert!(content.contains("\t"));
+    assert!(content.contains("你好世界"), "Chinese characters not found");
+    assert!(
+        content.contains("こんにちは世界"),
+        "Japanese characters not found"
+    );
+    assert!(
+        content.contains("مرحبا بالعالم"),
+        "Arabic characters not found"
+    );
+    assert!(content.contains("🌍🌎🌏"), "Emoji not found in content");
+    assert!(content.contains("∑∏∫√∞"), "Math symbols not found");
+    assert!(content.contains("\t"), "Tab character not found");
 }
 
 #[tokio::test]
@@ -263,8 +273,7 @@ async fn test_very_long_lines() {
     writer.write_line(&line_5kb).unwrap();
 
     writer.flush().await.unwrap();
-    drop(writer); // Ensure writer is properly closed
-    tokio::time::sleep(Duration::from_millis(500)).await; // Give more time for write
+    writer.close().await.unwrap(); // Properly close the writer - this now waits for background task
 
     // Check if file exists first
     assert!(log_path.exists(), "Log file was not created");
@@ -274,10 +283,10 @@ async fn test_very_long_lines() {
     });
 
     // Verify lines are preserved
-    assert!(content.contains(&line_100));
-    assert!(content.contains("Normal line"));
-    assert!(content.contains(&line_1kb));
-    assert!(content.contains(&line_5kb));
+    assert!(content.contains(&line_100), "100 byte line not found");
+    assert!(content.contains("Normal line"), "Normal line not found");
+    assert!(content.contains(&line_1kb), "1KB line not found");
+    assert!(content.contains(&line_5kb), "5KB line not found");
 
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.len(), 4);
@@ -303,7 +312,7 @@ async fn test_null_bytes_handling() {
     writer.write_line("Normal line after nulls").unwrap();
 
     writer.flush().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    writer.close().await.unwrap(); // Properly close the writer - this now waits for background task
 
     let content = fs::read(&log_path).await.unwrap();
 

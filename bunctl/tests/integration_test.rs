@@ -110,14 +110,30 @@ async fn test_config_with_supervisor() {
         apps: vec![
             AppConfig {
                 name: "app1".to_string(),
-                command: "cmd".to_string(),
-                args: vec!["/c".to_string(), "echo".to_string(), "app1".to_string()],
+                command: if cfg!(windows) {
+                    "cmd".to_string()
+                } else {
+                    "echo".to_string()
+                },
+                args: if cfg!(windows) {
+                    vec!["/c".to_string(), "echo".to_string(), "app1".to_string()]
+                } else {
+                    vec!["app1".to_string()]
+                },
                 ..Default::default()
             },
             AppConfig {
                 name: "app2".to_string(),
-                command: "cmd".to_string(),
-                args: vec!["/c".to_string(), "echo".to_string(), "app2".to_string()],
+                command: if cfg!(windows) {
+                    "cmd".to_string()
+                } else {
+                    "echo".to_string()
+                },
+                args: if cfg!(windows) {
+                    vec!["/c".to_string(), "echo".to_string(), "app2".to_string()]
+                } else {
+                    vec!["app2".to_string()]
+                },
                 ..Default::default()
             },
         ],

@@ -2,8 +2,6 @@ use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse, IpcServer, SubscriptionType
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(unix)]
-use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
@@ -14,8 +12,10 @@ fn get_test_path(name: &str) -> std::path::PathBuf {
 
 #[cfg(unix)]
 fn get_test_path(name: &str) -> std::path::PathBuf {
-    let temp_dir = TempDir::new().unwrap();
-    temp_dir.path().join(format!("test_{}.sock", name))
+    // Use /tmp directly for Unix socket tests
+    // Generate a unique name using process ID and test name
+    let pid = std::process::id();
+    std::path::PathBuf::from(format!("/tmp/bunctl_test_{}_{}.sock", pid, name))
 }
 
 #[tokio::test]

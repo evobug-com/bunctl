@@ -91,7 +91,7 @@ async fn test_log_writer_binary_data() {
     writer.write_line("Hello 世界 🌍").unwrap();
 
     writer.flush().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await; // Increase wait for Windows
+    writer.close().await.unwrap(); // Properly close the writer - this now waits for background task
 
     // Read as bytes
     let content = fs::read(&log_path).await.unwrap();
