@@ -1,9 +1,11 @@
 use crate::cli::StartArgs;
+// Note: start.rs uses its own daemon connection logic for starting the daemon if needed
 use bunctl_core::config::ConfigLoader;
 use bunctl_core::{AppConfig, AppId};
 use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
     // If config file is specified, load from it
@@ -95,7 +97,15 @@ pub async fn execute(args: StartArgs) -> anyhow::Result<()> {
         name: name.clone(),
         command,
         args: Vec::new(),
-        cwd: args.cwd.unwrap_or_else(|| std::env::current_dir().unwrap()),
+        cwd: args.cwd.unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|e| {
+                warn!(
+                    "Failed to get current directory: {}, using root directory",
+                    e
+                );
+                std::path::PathBuf::from("/")
+            })
+        }),
         env,
         auto_start: args.auto_restart,
         restart_policy: if args.auto_restart {

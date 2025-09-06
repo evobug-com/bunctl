@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 bunctl-core = { path = "../bunctl-core" }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt", "fs", "io-util"] }
 bytes = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
@@ -20,6 +20,8 @@ arc-swap = { workspace = true }
 chrono = "0.4"
 flate2 = "1.1"
 serde = { workspace = true }
+backoff = "0.4"
+num_cpus = "1.16"
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

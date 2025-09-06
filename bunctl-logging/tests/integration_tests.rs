@@ -78,7 +78,7 @@ async fn test_full_logging_lifecycle() {
 
     // Phase 8: Cleanup
     writer.flush().await.unwrap(); // Flush before removal
-    manager.remove_writer(&app_id).await;
+    let _ = manager.remove_writer(&app_id).await;
 
     // Wait a bit for file operations to complete
     tokio::time::sleep(Duration::from_millis(200)).await;

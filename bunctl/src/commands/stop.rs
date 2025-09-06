@@ -1,30 +1,37 @@
 use crate::cli::StopArgs;
-use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse};
-use std::path::PathBuf;
+use crate::common::{
+    SUCCESS_ICON, connect_to_daemon, daemon_not_running_message, validate_app_name,
+};
+use anyhow::Context;
+use bunctl_ipc::{IpcMessage, IpcResponse};
 
 pub async fn execute(args: StopArgs) -> anyhow::Result<()> {
-    let socket_path = get_socket_path();
+    // Validate the application name
+    validate_app_name(&args.name)?;
 
-    let mut client = IpcClient::connect(&socket_path)
+    let mut client = connect_to_daemon()
         .await
-        .map_err(|_| anyhow::anyhow!("Daemon not running. No apps to stop."))?;
+        .context(daemon_not_running_message("stop application"))?;
 
     let msg = IpcMessage::Stop {
         name: args.name.clone(),
     };
 
-    client.send(&msg).await?;
+    client
+        .send(&msg)
+        .await
+        .context("Failed to send stop command")?;
 
-    match client.recv().await? {
+    match client
+        .recv()
+        .await
+        .context("Failed to receive response from daemon")?
+    {
         IpcResponse::Success { message } => {
-            println!("✔ {}", message);
+            println!("{} {}", SUCCESS_ICON, message);
             Ok(())
         }
         IpcResponse::Error { message } => Err(anyhow::anyhow!(message)),
         _ => Ok(()),
     }
-}
-
-fn get_socket_path() -> PathBuf {
-    bunctl_core::config::default_socket_path()
 }

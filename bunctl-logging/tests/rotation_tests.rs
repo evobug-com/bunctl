@@ -154,8 +154,20 @@ async fn test_rotation_with_compression() {
     let mut rotation = LogRotation::new(config);
     rotation.rotate(&log_path).await.unwrap();
 
-    // Original file should not exist
-    assert!(!log_path.exists());
+    // On Windows, file is truncated; on Unix, it's removed
+    #[cfg(windows)]
+    {
+        // File should exist but be empty
+        assert!(log_path.exists());
+        let contents = fs::read(&log_path).unwrap();
+        assert_eq!(contents.len(), 0, "File should be truncated");
+    }
+
+    #[cfg(not(windows))]
+    {
+        // File should not exist
+        assert!(!log_path.exists());
+    }
 
     // Compressed file should exist
     let entries: Vec<_> = fs::read_dir(temp_dir.path())
@@ -163,9 +175,19 @@ async fn test_rotation_with_compression() {
         .filter_map(|e| e.ok())
         .collect();
 
-    assert_eq!(entries.len(), 1);
-    let compressed_path = entries[0].path();
-    assert!(compressed_path.to_string_lossy().ends_with(".log.gz"));
+    // On Windows we have 2 files (truncated original + compressed), on Unix just 1 (compressed)
+    #[cfg(windows)]
+    assert_eq!(entries.len(), 2, "Should have original + compressed file");
+    #[cfg(not(windows))]
+    assert_eq!(entries.len(), 1, "Should have only compressed file");
+
+    // Find the compressed file
+    let compressed_path = entries
+        .iter()
+        .map(|e| e.path())
+        .find(|p| p.to_string_lossy().ends_with(".log.gz"))
+        .expect("Should have a compressed file");
+    assert!(compressed_path.exists());
 
     // Verify it's actually compressed
     let compressed_size = fs::metadata(&compressed_path).unwrap().len();

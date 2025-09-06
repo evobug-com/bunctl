@@ -1,6 +1,12 @@
-#[cfg(unix)]
+//! Inter-process communication library for bunctl
+//!
+//! This crate provides platform-specific IPC implementations for communication
+//! between the bunctl CLI and daemon process. It uses Unix domain sockets on Linux
+//! and named pipes on Windows.
+
+#[cfg(target_os = "linux")]
 mod unix;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use unix::{IpcClient, IpcConnection, IpcServer};
 
 #[cfg(windows)]
@@ -9,7 +15,15 @@ mod windows;
 pub use windows::{IpcClient, IpcConnection, IpcServer};
 
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
+/// Maximum allowed message size (10MB)
+pub const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Default timeout for IPC operations
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Types of event subscriptions available
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SubscriptionType {
     StatusEvents { app_name: Option<String> },
@@ -17,6 +31,7 @@ pub enum SubscriptionType {
     AllEvents { app_name: Option<String> },
 }
 
+/// Messages that can be sent from client to server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcMessage {
     Start { name: String, config: String },
@@ -30,6 +45,7 @@ pub enum IpcMessage {
     Unsubscribe,
 }
 
+/// Responses sent from server to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcResponse {
     Success {

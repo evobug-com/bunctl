@@ -1,7 +1,8 @@
 use crate::cli::LogsArgs;
-use bunctl_ipc::{IpcClient, IpcMessage, IpcResponse, SubscriptionType};
+use crate::common::{connect_to_daemon, daemon_not_running_message, validate_app_name};
+use anyhow::Context;
+use bunctl_ipc::{IpcMessage, IpcResponse, SubscriptionType};
 use colored::*;
-use std::path::PathBuf;
 
 pub async fn execute(args: LogsArgs) -> anyhow::Result<()> {
     if args.watch {
@@ -12,20 +13,30 @@ pub async fn execute(args: LogsArgs) -> anyhow::Result<()> {
 }
 
 async fn execute_once(args: LogsArgs) -> anyhow::Result<()> {
-    let socket_path = get_socket_path();
+    // Validate the application name if provided
+    if let Some(ref name) = args.name {
+        validate_app_name(name)?;
+    }
 
-    let mut client = IpcClient::connect(&socket_path)
+    let mut client = connect_to_daemon()
         .await
-        .map_err(|_| anyhow::anyhow!("Daemon not running. No logs available."))?;
+        .context(daemon_not_running_message("view logs"))?;
 
     let msg = IpcMessage::Logs {
         name: args.name.clone(),
         lines: args.lines,
     };
 
-    client.send(&msg).await?;
+    client
+        .send(&msg)
+        .await
+        .context("Failed to send logs command")?;
 
-    match client.recv().await? {
+    match client
+        .recv()
+        .await
+        .context("Failed to receive response from daemon")?
+    {
         IpcResponse::Data { data } => {
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&data)?);
@@ -40,11 +51,14 @@ async fn execute_once(args: LogsArgs) -> anyhow::Result<()> {
 }
 
 async fn execute_watch_mode(args: LogsArgs) -> anyhow::Result<()> {
-    let socket_path = get_socket_path();
+    // Validate the application name if provided
+    if let Some(ref name) = args.name {
+        validate_app_name(name)?;
+    }
 
-    let mut client = IpcClient::connect(&socket_path)
+    let mut client = connect_to_daemon()
         .await
-        .map_err(|_| anyhow::anyhow!("Daemon not running. Cannot watch logs."))?;
+        .context(daemon_not_running_message("watch logs"))?;
 
     // Subscribe to log events
     let subscription = SubscriptionType::LogEvents {
@@ -348,8 +362,4 @@ fn format_error_line_simple(app: &str, line: &str) -> String {
 
 fn format_output_line_simple(app: &str, line: &str) -> String {
     format!("[{}] {}", app.cyan(), line)
-}
-
-fn get_socket_path() -> PathBuf {
-    bunctl_core::config::default_socket_path()
 }

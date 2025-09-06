@@ -20,6 +20,8 @@ async fn test_p99_latency() {
         },
         buffer_size: 8192,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = Arc::new(AsyncLogWriter::new(config).await.unwrap());
@@ -89,6 +91,8 @@ async fn test_throughput() {
         },
         buffer_size: 16384,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = Arc::new(AsyncLogWriter::new(config).await.unwrap());
@@ -162,6 +166,8 @@ async fn test_concurrent_throughput() {
             },
             buffer_size: 8192,
             flush_interval: Duration::from_millis(50),
+            max_concurrent_writes: 1000,
+            enable_compression: false,
         };
 
         let handle = task::spawn(async move {
@@ -258,6 +264,8 @@ async fn test_rotation_performance() {
         },
         buffer_size: 8192,
         flush_interval: Duration::from_millis(50),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -310,6 +318,8 @@ async fn test_compression_performance() {
         },
         buffer_size: 16384,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -360,6 +370,8 @@ async fn test_stress_test_memory_stability() {
         },
         buffer_size: 8192,
         flush_interval: Duration::from_millis(10),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = Arc::new(AsyncLogWriter::new(config).await.unwrap());

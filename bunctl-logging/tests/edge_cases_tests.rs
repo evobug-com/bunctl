@@ -40,6 +40,8 @@ async fn test_permission_denied_handling() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     // Should handle permission error gracefully
@@ -85,6 +87,8 @@ async fn test_disk_full_simulation() {
         },
         buffer_size: 16, // Very small buffer
         flush_interval: Duration::from_millis(10),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -128,14 +132,20 @@ async fn test_nonexistent_directory() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
-    // Should fail to create writer in non-existent directory
+    // Should create parent directories if they don't exist
     let result = AsyncLogWriter::new(config).await;
     assert!(
-        result.is_err(),
-        "Should fail to create log in non-existent directory"
+        result.is_ok(),
+        "Should create parent directories automatically"
     );
+
+    // Verify the parent directory was created
+    let parent = nested_path.parent().unwrap();
+    assert!(parent.exists(), "Parent directory should have been created");
 }
 
 #[tokio::test]
@@ -148,6 +158,8 @@ async fn test_unicode_and_special_chars() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -212,6 +224,8 @@ async fn test_path_traversal_safety() {
             rotation: RotationConfig::default(),
             buffer_size: 4096,
             flush_interval: Duration::from_millis(100),
+            max_concurrent_writes: 1000,
+            enable_compression: false,
         };
 
         // Should either fail or write to safe location
@@ -258,6 +272,8 @@ async fn test_very_long_lines() {
         rotation: RotationConfig::default(),
         buffer_size: 512 * 1024, // 512KB buffer
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -302,6 +318,8 @@ async fn test_null_bytes_handling() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();
@@ -342,6 +360,8 @@ async fn test_concurrent_file_access() {
             rotation: RotationConfig::default(),
             buffer_size: 4096,
             flush_interval: Duration::from_millis(50),
+            max_concurrent_writes: 1000,
+            enable_compression: false,
         };
 
         match AsyncLogWriter::new(config).await {
@@ -461,6 +481,8 @@ async fn test_windows_file_locking() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     // Try to create writer while file is locked
@@ -486,6 +508,8 @@ async fn test_windows_file_locking() {
         rotation: RotationConfig::default(),
         buffer_size: 4096,
         flush_interval: Duration::from_millis(100),
+        max_concurrent_writes: 1000,
+        enable_compression: false,
     };
 
     let writer = AsyncLogWriter::new(config).await.unwrap();

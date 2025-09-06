@@ -23,10 +23,6 @@ tokio = { workspace = true, features = ["net"] }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.14"
-tokio-test = "0.4"
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros"] }
-proptest = "1.6"
-criterion = "0.6"
-futures = "0.3"
+tempfile = "3.14"
 rand = "0.8"

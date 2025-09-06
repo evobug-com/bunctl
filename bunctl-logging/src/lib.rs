@@ -1,8 +1,10 @@
 mod buffer;
+mod metrics;
 mod rotation;
 mod writer;
 
 pub use buffer::{LineBuffer, LineBufferConfig};
+pub use metrics::{LogMetrics, MetricsSnapshot};
 pub use rotation::{LogRotation, RotationConfig, RotationStrategy};
 pub use writer::{AsyncLogWriter, LogWriter, LogWriterConfig};
 
@@ -36,8 +38,14 @@ pub struct LogConfig {
 
 impl Default for LogConfig {
     fn default() -> Self {
+        let base_dir = if cfg!(windows) {
+            PathBuf::from(r"C:\ProgramData\bunctl\logs")
+        } else {
+            PathBuf::from("/var/log/bunctl")
+        };
+
         Self {
-            base_dir: PathBuf::from("/var/log/bunctl"),
+            base_dir,
             max_file_size: 10 * 1024 * 1024,
             max_files: 10,
             compression: true,
@@ -78,6 +86,8 @@ impl LogManager {
             },
             buffer_size: self.config.buffer_size,
             flush_interval: std::time::Duration::from_millis(self.config.flush_interval_ms),
+            max_concurrent_writes: 1000,
+            enable_compression: self.config.compression,
         };
 
         let writer = Arc::new(AsyncLogWriter::new(writer_config).await.map_err(|e| {
