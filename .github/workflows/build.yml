@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master, v3-rewrite ]
+  pull_request:
+    branches: [ main, master, v3-rewrite ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build - ${{ matrix.platform.release_for }}
+    strategy:
+      matrix:
+        platform:
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: bunctl.exe
+            name: bunctl-Windows-x86_64.zip
+            command: build
+
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: bunctl
+            name: bunctl-Linux-x86_64.tar.gz
+            command: build
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Package (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        run: |
+          7z a ${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+
+      - name: Package (Unix)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          tar czf ${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}
+          path: ${{ matrix.platform.name }}

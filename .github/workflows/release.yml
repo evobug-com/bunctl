@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'bunctl-v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-upload:
+    name: Build and Upload - ${{ matrix.platform.release_for }}
+    strategy:
+      matrix:
+        platform:
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: bunctl.exe
+            name: bunctl-Windows-x86_64.zip
+
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: bunctl
+            name: bunctl-Linux-x86_64.tar.gz
+
+          - release_for: Linux-musl-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bin: bunctl
+            name: bunctl-Linux-musl-x86_64.tar.gz
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install musl-tools (Linux musl)
+        if: matrix.platform.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Strip binary (Linux)
+        if: matrix.platform.os != 'windows-latest'
+        run: strip target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+
+      - name: Package (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        run: |
+          7z a ${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+
+      - name: Package (Unix)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          tar czf ${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }}
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ matrix.platform.name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,34 @@
+[package]
+name = "bunctl-supervisor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bunctl-core = { path = "../bunctl-core" }
+tokio = { workspace = true }
+mio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+once_cell = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+nix = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fsevent-sys = { workspace = true }
+core-foundation = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+winapi-util = { workspace = true }
