@@ -294,7 +294,7 @@ checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
 name = "bunctl"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "bunctl-core"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "bunctl-ipc"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "bunctl-core",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "bunctl-logging"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "bunctl-supervisor"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
