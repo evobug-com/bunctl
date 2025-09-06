@@ -235,6 +235,13 @@ async fn test_stress_concurrent_read_write() {
 
     let manager = Arc::new(LogManager::new(config));
     let app_id = bunctl_core::AppId::new("stress-test").unwrap();
+
+    // Initialize the writer first to ensure log file exists before readers start
+    let initial_writer = manager.get_writer(&app_id).await.unwrap();
+    initial_writer.write_line("Test started").unwrap();
+    initial_writer.flush().await.unwrap();
+    drop(initial_writer);
+
     let duration = Duration::from_secs(2);
     let start = Instant::now();
 
