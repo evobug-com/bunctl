@@ -173,7 +173,7 @@ bunctl status --json | jq '.[] | .memory_bytes'
 
 ## 📚 **Configuration**
 
-bunctl auto-discovers config files in priority order: `bunctl.json` → `ecosystem.config.js` → `package.json`
+bunctl auto-discovers config files in priority order: `bunctl.json` → `ecosystem.config.json` → `package.json`
 
 ### bunctl.json (Recommended)
 ```json
@@ -193,16 +193,19 @@ bunctl auto-discovers config files in priority order: `bunctl.json` → `ecosyst
 }
 ```
 
-### ecosystem.config.js (PM2 Compatible)
-```javascript
-module.exports = {
-  apps: [{
-    name: 'api',
-    script: 'src/server.ts',
-    interpreter: 'bun',
-    max_restarts: 10,
-    max_memory_restart: '512M',
-    env: { PORT: 3000, NODE_ENV: 'production' }
+### ecosystem.config.json (PM2 Compatible)
+
+> ⚠️ **Security Notice**: JavaScript config files (`.js`) are no longer supported as of v3.0.0+ to prevent code execution vulnerabilities. Please use JSON format instead.
+
+```json
+{
+  "apps": [{
+    "name": "api",
+    "script": "src/server.ts",
+    "interpreter": "bun",
+    "max_restarts": 10,
+    "max_memory_restart": "512M",
+    "env": { "PORT": "3000", "NODE_ENV": "production" }
   }]
 }
 ```
@@ -272,12 +275,42 @@ bunctl status --json | jq -r '.[] | select(.restarts > 10) | .name' |
 
 ## 🔒 **Security**
 
-### Command Injection Prevention
-bunctl-rs v3.0.0+ includes critical security improvements to prevent command injection attacks:
+### Security Improvements in v3.0.0+
+
+#### Command Injection Prevention
+bunctl-rs includes critical security improvements to prevent command injection attacks:
 
 - **No Shell Parsing**: Commands and arguments are never passed through a shell interpreter
 - **Literal Arguments**: All command arguments are treated as literal strings
 - **Safe Configuration**: Shell metacharacters (`;`, `|`, `&`, `>`, etc.) are passed as-is to the process
+
+#### JavaScript Configuration Execution Prevention
+As of v3.0.0+, JavaScript configuration files are **no longer supported** to prevent code execution vulnerabilities:
+
+- **Blocked Files**: `ecosystem.config.js`, `pm2.config.js` cannot be loaded
+- **JSON Only**: Use `ecosystem.config.json` or `bunctl.json` instead
+- **Migration Required**: Convert existing JS configs to JSON format
+
+**Migration Example:**
+```javascript
+// ❌ OLD: ecosystem.config.js (no longer supported)
+module.exports = {
+  apps: [{
+    name: 'myapp',
+    script: './index.js'
+  }]
+}
+```
+
+```json
+// ✅ NEW: ecosystem.config.json (secure)
+{
+  "apps": [{
+    "name": "myapp",
+    "script": "./index.js"
+  }]
+}
+```
 
 #### Configuration Security
 When defining commands in your configuration files, arguments must be explicitly separated:
