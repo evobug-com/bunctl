@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Configure logging filter based on environment and execution mode
-    // 
+    //
     // Logging behavior:
     // - Daemon mode: Uses BUNCTL_LOG_LEVEL if RUST_LOG is not set (defaults to "info")
     // - Normal mode: Uses RUST_LOG, falls back to BUNCTL_LOG_LEVEL, then defaults to "info"
@@ -113,18 +113,22 @@ mod tests {
 
     /// Helper to create a filter with test environment variables
     /// Note: Uses unsafe blocks for environment variable manipulation in tests only
-    fn create_test_filter(is_daemon: bool, rust_log: Option<&str>, bunctl_log: Option<&str>) -> EnvFilter {
+    fn create_test_filter(
+        is_daemon: bool,
+        rust_log: Option<&str>,
+        bunctl_log: Option<&str>,
+    ) -> EnvFilter {
         // Temporarily set environment variables for testing
         let rust_log_original = env::var("RUST_LOG").ok();
         let bunctl_log_original = env::var("BUNCTL_LOG_LEVEL").ok();
-        
+
         // Clear existing values
         // SAFETY: This is only used in tests where we control the environment
         unsafe {
             env::remove_var("RUST_LOG");
             env::remove_var("BUNCTL_LOG_LEVEL");
         }
-        
+
         // Set test values if provided
         // SAFETY: This is only used in tests where we control the environment
         unsafe {
@@ -135,7 +139,7 @@ mod tests {
                 env::set_var("BUNCTL_LOG_LEVEL", val);
             }
         }
-        
+
         // Create filter using the same logic as main
         let filter = if is_daemon && env::var("RUST_LOG").is_err() {
             let default_level =
@@ -148,7 +152,7 @@ mod tests {
                 EnvFilter::new(&default_level)
             })
         };
-        
+
         // Restore original values
         // SAFETY: This is only used in tests where we control the environment
         unsafe {
@@ -161,7 +165,7 @@ mod tests {
                 env::set_var("BUNCTL_LOG_LEVEL", val);
             }
         }
-        
+
         filter
     }
 
