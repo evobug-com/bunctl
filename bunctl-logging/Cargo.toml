@@ -1,0 +1,25 @@
+[package]
+name = "bunctl-logging"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bunctl-core = { path = "../bunctl-core" }
+tokio = { workspace = true, features = ["sync", "time", "rt", "fs", "io-util"] }
+bytes = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+chrono = "0.4"
+flate2 = "1.1"
+serde = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "test-util", "time"] }
