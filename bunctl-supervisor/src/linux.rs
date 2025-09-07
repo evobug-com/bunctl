@@ -439,6 +439,10 @@ impl ProcessSupervisor for LinuxSupervisor {
             rx
         })
     }
+    
+    fn get_handle(&self, app_id: &AppId) -> Option<ProcessHandle> {
+        self.registry.get(app_id)
+    }
 }
 
 impl Drop for LinuxSupervisor {

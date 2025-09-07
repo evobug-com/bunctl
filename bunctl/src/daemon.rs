@@ -14,6 +14,9 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
+#[cfg(windows)]
+use std::os::windows::process::ExitStatusExt;
+
 use crate::cli::DaemonArgs;
 
 #[derive(Debug)]
@@ -1210,29 +1213,37 @@ impl Daemon {
             IpcMessage::Stop { name } => match AppId::new(&name) {
                 Ok(app_id) => {
                     if let Some(app) = apps.get(&app_id) {
-                        if let Some(pid) = app.get_pid() {
+                        if let Some(_pid) = app.get_pid() {
                             app.set_state(AppState::Stopping);
-                            let handle = bunctl_core::ProcessHandle {
-                                pid,
-                                app_id: app_id.clone(),
-                                inner: None,
-                                stdout: None,
-                                stderr: None,
-                            };
-                            let stop_timeout = app.config.read().stop_timeout;
-                            match supervisor
-                                .graceful_stop(&mut handle.clone(), stop_timeout)
-                                .await
-                            {
-                                Ok(_) => {
-                                    app.set_state(AppState::Stopped);
-                                    IpcResponse::Success {
-                                        message: format!("Stopped app {}", name),
+                            
+                            // Get the handle from the supervisor's registry
+                            if let Some(mut handle) = supervisor.get_handle(&app_id) {
+                                let stop_timeout = app.config.read().stop_timeout;
+                                match supervisor
+                                    .graceful_stop(&mut handle, stop_timeout)
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        app.set_state(AppState::Stopped);
+                                        app.set_pid(None);
+                                        IpcResponse::Success {
+                                            message: format!("Stopped app {}", name),
+                                        }
+                                    }
+                                    Err(e) => {
+                                        app.set_state(AppState::Running);
+                                        IpcResponse::Error {
+                                            message: format!("Failed to stop app {}: {}", name, e),
+                                        }
                                     }
                                 }
-                                Err(e) => IpcResponse::Error {
-                                    message: format!("Failed to stop app {}: {}", name, e),
-                                },
+                            } else {
+                                // Process is tracked but handle not in registry, try to kill by PID
+                                app.set_state(AppState::Stopped);
+                                app.set_pid(None);
+                                IpcResponse::Success {
+                                    message: format!("Stopped app {} (handle not found, marked as stopped)", name),
+                                }
                             }
                         } else {
                             IpcResponse::Error {
@@ -1302,22 +1313,21 @@ impl Daemon {
                     Ok(app_id) => {
                         // First stop the app
                         if let Some(app) = apps.get(&app_id) {
-                            if let Some(pid) = app.get_pid() {
+                            if let Some(_pid) = app.get_pid() {
                                 app.set_state(AppState::Stopping);
-                                let handle = bunctl_core::ProcessHandle {
-                                    pid,
-                                    app_id: app_id.clone(),
-                                    inner: None,
-                                    stdout: None,
-                                    stderr: None,
+                                
+                                // Get the handle from the supervisor's registry
+                                let stop_result = if let Some(mut handle) = supervisor.get_handle(&app_id) {
+                                    let stop_timeout = app.config.read().stop_timeout;
+                                    supervisor.graceful_stop(&mut handle, stop_timeout).await
+                                } else {
+                                    // No handle found, just mark as stopped
+                                    Ok(bunctl_core::ExitStatus::from_std(std::process::ExitStatus::from_raw(0)))
                                 };
-                                let stop_timeout = app.config.read().stop_timeout;
+                                
                                 let config = app.config.read().clone();
 
-                                match supervisor
-                                    .graceful_stop(&mut handle.clone(), stop_timeout)
-                                    .await
-                                {
+                                match stop_result {
                                     Ok(_) => {
                                         app.set_state(AppState::Stopped);
                                         // Now restart it
@@ -1390,19 +1400,16 @@ impl Daemon {
                     Ok(app_id) => {
                         if let Some((_, app)) = apps.remove(&app_id) {
                             // Stop the app if it's running
-                            if let Some(pid) = app.get_pid() {
+                            if let Some(_pid) = app.get_pid() {
                                 app.set_state(AppState::Stopping);
-                                let handle = bunctl_core::ProcessHandle {
-                                    pid,
-                                    app_id: app_id.clone(),
-                                    inner: None,
-                                    stdout: None,
-                                    stderr: None,
-                                };
-                                let stop_timeout = app.config.read().stop_timeout;
-                                let _ = supervisor
-                                    .graceful_stop(&mut handle.clone(), stop_timeout)
-                                    .await;
+                                
+                                // Get the handle from the supervisor's registry
+                                if let Some(mut handle) = supervisor.get_handle(&app_id) {
+                                    let stop_timeout = app.config.read().stop_timeout;
+                                    let _ = supervisor
+                                        .graceful_stop(&mut handle, stop_timeout)
+                                        .await;
+                                }
                             }
                             IpcResponse::Success {
                                 message: format!("Deleted app {}", name),
