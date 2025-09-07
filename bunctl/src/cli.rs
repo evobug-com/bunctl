@@ -140,8 +140,8 @@ pub struct StartArgs {
 
 #[derive(Parser)]
 pub struct StopArgs {
-    /// Application name or "all"
-    pub name: String,
+    /// Application name or "all" (auto-discovers from config if not provided)
+    pub name: Option<String>,
 
     /// Timeout for graceful stop (seconds)
     #[arg(short, long, default_value = "10")]
@@ -334,7 +334,7 @@ mod tests {
         let cli = Cli::parse_from(["bunctl", "stop", "myapp"]);
         match cli.command {
             Command::Stop(args) => {
-                assert_eq!(args.name, "myapp");
+                assert_eq!(args.name, Some("myapp".to_string()));
                 assert_eq!(args.timeout, 10);
             }
             _ => panic!("Expected Stop command"),
