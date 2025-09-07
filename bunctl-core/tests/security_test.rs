@@ -122,7 +122,7 @@ async fn test_direct_js_file_load_fails() {
 async fn test_ecosystem_json_loading_works() {
     let temp_dir = TempDir::new().unwrap();
     let json_path = temp_dir.path().join("ecosystem.config.json");
-    
+
     let json_config = r#"{
         "apps": [{
             "name": "test-app",
@@ -135,20 +135,23 @@ async fn test_ecosystem_json_loading_works() {
             }
         }]
     }"#;
-    
+
     fs::write(&json_path, json_config).await.unwrap();
-    
+
     // Test direct file loading
     let loader = ConfigLoader::new();
     let result = loader.load_file(&json_path).await;
     assert!(result.is_ok(), "Failed to load ecosystem.config.json");
-    
+
     let config = result.unwrap();
     assert_eq!(config.apps.len(), 1);
     assert_eq!(config.apps[0].name, "test-app");
     assert_eq!(config.apps[0].command, "bun");
     assert_eq!(config.apps[0].args, vec!["./app.js"]);
-    assert_eq!(config.apps[0].env.get("NODE_ENV"), Some(&"production".to_string()));
+    assert_eq!(
+        config.apps[0].env.get("NODE_ENV"),
+        Some(&"production".to_string())
+    );
     assert_eq!(config.apps[0].env.get("PORT"), Some(&"3000".to_string()));
 }
 
@@ -156,7 +159,7 @@ async fn test_ecosystem_json_loading_works() {
 async fn test_pm2_json_loading_works() {
     let temp_dir = TempDir::new().unwrap();
     let json_path = temp_dir.path().join("pm2.config.json");
-    
+
     let json_config = r#"{
         "apps": [{
             "name": "pm2-app",
@@ -165,13 +168,13 @@ async fn test_pm2_json_loading_works() {
             "max_memory_restart": "512M"
         }]
     }"#;
-    
+
     fs::write(&json_path, json_config).await.unwrap();
-    
+
     let loader = ConfigLoader::new();
     let result = loader.load_file(&json_path).await;
     assert!(result.is_ok(), "Failed to load pm2.config.json");
-    
+
     let config = result.unwrap();
     assert_eq!(config.apps.len(), 1);
     assert_eq!(config.apps[0].name, "pm2-app");
