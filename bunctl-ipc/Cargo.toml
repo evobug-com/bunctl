@@ -7,22 +7,11 @@ license.workspace = true
 
 [dependencies]
 bunctl-core = { path = "../bunctl-core" }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-bytes = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 tracing = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-tokio = { workspace = true, features = ["net"] }
-
-[target.'cfg(windows)'.dependencies]
-tokio = { workspace = true, features = ["net"] }
-windows-sys = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros"] }
-tempfile = "3.14"
-rand = "0.8"
+rand = { workspace = true }

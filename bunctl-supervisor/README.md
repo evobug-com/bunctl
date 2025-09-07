@@ -173,33 +173,6 @@ Each supervisor uses a single-threaded async runtime to minimize overhead:
 - **Event-driven**: Uses OS-native event systems (epoll, IOCP)
 - **Cooperative multitasking**: Yields control during I/O operations
 
-## Build Requirements
-
-### Linux
-```toml
-[dependencies]
-libc = "0.2"
-nix = "0.27"
-inotify = "0.10"  # For file watching
-```
-
-### Windows
-```toml
-[dependencies]
-windows-sys = "0.52"
-winapi-util = "0.1"
-```
-
-### Cross-Platform
-```toml
-[dependencies]
-tokio = { version = "1.0", features = ["rt", "process", "signal"] }
-async-trait = "0.1"
-tracing = "0.1"
-parking_lot = "0.12"
-dashmap = "5.0"
-```
-
 ## Testing Strategy
 
 ### Unit Tests (`tests/registry_tests.rs`)
