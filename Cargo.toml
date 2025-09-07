@@ -17,6 +17,30 @@ repository = "https://github.com/evobug/bunctl-rs"
 rust-version = "1.89.0"
 
 [workspace.dependencies]
+
+# unix dependencies
+
+#[target.'cfg(unix)'.workspace.dependencies]
+nix = { version = "0.30", features = ["signal", "process", "fs", "user"] }
+libc = "0.2"
+
+# windows dependencies
+
+#[target.'cfg(windows)'.workspace.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+] }
+
+# common dependencies
+
 tokio = { version = "1.47", features = ["rt", "macros", "time", "process", "signal", "fs", "io-util", "sync", "parking_lot", "net", "test-util", "rt-multi-thread"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -35,20 +59,6 @@ rand = "0.9"
 tempfile = "3"
 shell-words = "1"
 chrono = "0.4"
-
-libc = "0.2"
-nix = { version = "0.30", features = ["signal", "process", "fs", "user"] }
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Threading", 
-    "Win32_System_JobObjects",
-    "Win32_System_Console",
-    "Win32_System_IO",
-    "Win32_Storage_FileSystem",
-    "Win32_Security",
-    "Win32_System_Pipes",
-    "Win32_System_ProcessStatus",
-] }
 
 [profile.release]
 opt-level = 3
