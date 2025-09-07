@@ -81,6 +81,31 @@ bunctl logs --json --watch          # JSON + real-time streaming
 
 **Features:** Colored stderr, app name prefixes, stack trace formatting, JSON support
 
+#### Logging Configuration
+
+bunctl supports flexible logging configuration through environment variables:
+
+- **`RUST_LOG`**: Standard Rust logging filter (takes precedence when set)
+- **`BUNCTL_LOG_LEVEL`**: Alternative logging configuration (default: `info`)
+- **`BUNCTL_CONSOLE_LOG`**: Force console output in daemon mode (for debugging)
+
+```bash
+# Set custom log level
+export BUNCTL_LOG_LEVEL=debug
+bunctl daemon
+
+# Use standard Rust logging
+export RUST_LOG=bunctl=debug,bunctl_core=trace
+bunctl start myapp
+
+# Force console output for daemon debugging
+export BUNCTL_CONSOLE_LOG=1
+bunctl daemon
+```
+
+**Log Levels:** `error`, `warn`, `info` (default), `debug`, `trace`  
+**Daemon Mode:** Logs to file (`/var/log/bunctl/daemon.log` on Linux, `%LOCALAPPDATA%\bunctl\logs\daemon.log` on Windows)
+
 ### 🔄 **Smart Restart Management**
 Exponential backoff with visual tracking: `3/10` (Green) → `8/10` (Yellow) → `10/10 EXHAUSTED` (Red)
 
