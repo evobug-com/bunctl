@@ -14,6 +14,9 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 #[cfg(windows)]
 use std::os::windows::process::ExitStatusExt;
 
@@ -1215,14 +1218,11 @@ impl Daemon {
                     if let Some(app) = apps.get(&app_id) {
                         if let Some(_pid) = app.get_pid() {
                             app.set_state(AppState::Stopping);
-                            
+
                             // Get the handle from the supervisor's registry
                             if let Some(mut handle) = supervisor.get_handle(&app_id) {
                                 let stop_timeout = app.config.read().stop_timeout;
-                                match supervisor
-                                    .graceful_stop(&mut handle, stop_timeout)
-                                    .await
-                                {
+                                match supervisor.graceful_stop(&mut handle, stop_timeout).await {
                                     Ok(_) => {
                                         app.set_state(AppState::Stopped);
                                         app.set_pid(None);
@@ -1242,7 +1242,10 @@ impl Daemon {
                                 app.set_state(AppState::Stopped);
                                 app.set_pid(None);
                                 IpcResponse::Success {
-                                    message: format!("Stopped app {} (handle not found, marked as stopped)", name),
+                                    message: format!(
+                                        "Stopped app {} (handle not found, marked as stopped)",
+                                        name
+                                    ),
                                 }
                             }
                         } else {
@@ -1315,16 +1318,19 @@ impl Daemon {
                         if let Some(app) = apps.get(&app_id) {
                             if let Some(_pid) = app.get_pid() {
                                 app.set_state(AppState::Stopping);
-                                
+
                                 // Get the handle from the supervisor's registry
-                                let stop_result = if let Some(mut handle) = supervisor.get_handle(&app_id) {
-                                    let stop_timeout = app.config.read().stop_timeout;
-                                    supervisor.graceful_stop(&mut handle, stop_timeout).await
-                                } else {
-                                    // No handle found, just mark as stopped
-                                    Ok(bunctl_core::ExitStatus::from_std(std::process::ExitStatus::from_raw(0)))
-                                };
-                                
+                                let stop_result =
+                                    if let Some(mut handle) = supervisor.get_handle(&app_id) {
+                                        let stop_timeout = app.config.read().stop_timeout;
+                                        supervisor.graceful_stop(&mut handle, stop_timeout).await
+                                    } else {
+                                        // No handle found, just mark as stopped
+                                        Ok(bunctl_core::ExitStatus::from_std(
+                                            std::process::ExitStatus::from_raw(0),
+                                        ))
+                                    };
+
                                 let config = app.config.read().clone();
 
                                 match stop_result {
@@ -1402,13 +1408,12 @@ impl Daemon {
                             // Stop the app if it's running
                             if let Some(_pid) = app.get_pid() {
                                 app.set_state(AppState::Stopping);
-                                
+
                                 // Get the handle from the supervisor's registry
                                 if let Some(mut handle) = supervisor.get_handle(&app_id) {
                                     let stop_timeout = app.config.read().stop_timeout;
-                                    let _ = supervisor
-                                        .graceful_stop(&mut handle, stop_timeout)
-                                        .await;
+                                    let _ =
+                                        supervisor.graceful_stop(&mut handle, stop_timeout).await;
                                 }
                             }
                             IpcResponse::Success {

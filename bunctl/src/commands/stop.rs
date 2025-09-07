@@ -17,11 +17,11 @@ pub async fn execute(args: StopArgs) -> anyhow::Result<()> {
             .load()
             .await
             .context("No app name provided and no config file found in current directory")?;
-        
+
         if config.apps.is_empty() {
             return Err(anyhow::anyhow!("No apps found in config file"));
         }
-        
+
         if config.apps.len() > 1 {
             let app_names: Vec<String> = config.apps.iter().map(|a| a.name.clone()).collect();
             return Err(anyhow::anyhow!(
@@ -29,7 +29,7 @@ pub async fn execute(args: StopArgs) -> anyhow::Result<()> {
                 app_names.join(", ")
             ));
         }
-        
+
         config.apps[0].name.clone()
     };
 
@@ -40,9 +40,7 @@ pub async fn execute(args: StopArgs) -> anyhow::Result<()> {
         .await
         .context(daemon_not_running_message("stop application"))?;
 
-    let msg = IpcMessage::Stop {
-        name: name.clone(),
-    };
+    let msg = IpcMessage::Stop { name: name.clone() };
 
     client
         .send(&msg)
@@ -58,7 +56,9 @@ pub async fn execute(args: StopArgs) -> anyhow::Result<()> {
             println!("{} {}", SUCCESS_ICON, message);
             Ok(())
         }
-        IpcResponse::Error { message } => Err(anyhow::anyhow!("Failed to stop app {}: {}", name, message)),
+        IpcResponse::Error { message } => {
+            Err(anyhow::anyhow!("Failed to stop app {}: {}", name, message))
+        }
         _ => Ok(()),
     }
 }
