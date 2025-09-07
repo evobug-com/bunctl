@@ -12,20 +12,15 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-bytes = { workspace = true }
 async-trait = { workspace = true }
-dashmap = { workspace = true }
 parking_lot = { workspace = true }
 arc-swap = { workspace = true }
 sha2 = { workspace = true }
-once_cell = { workspace = true }
 rand = { workspace = true }
 shell-words = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
 nix = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
