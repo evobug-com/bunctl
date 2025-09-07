@@ -44,10 +44,19 @@ impl ConfigLoader {
                 return self.load_bunctl_json(&bunctl_json).await;
             }
 
-            // Try ecosystem.config.js
+            // Check for ecosystem.config.js and warn about security
             let ecosystem_js = dir.join("ecosystem.config.js");
             if ecosystem_js.exists() {
-                return self.load_ecosystem_js(&ecosystem_js).await;
+                tracing::warn!(
+                    "Found ecosystem.config.js at {} but JavaScript configs are disabled for security. \
+                     Please convert to ecosystem.config.json format.",
+                    ecosystem_js.display()
+                );
+                // Try to find JSON alternative
+                let ecosystem_json = dir.join("ecosystem.config.json");
+                if ecosystem_json.exists() {
+                    return self.load_ecosystem_json(&ecosystem_json).await;
+                }
             }
 
             // Try ecosystem.config.json
@@ -56,10 +65,14 @@ impl ConfigLoader {
                 return self.load_ecosystem_json(&ecosystem_json).await;
             }
 
-            // Try pm2.config.js (PM2 compatibility)
+            // Check for pm2.config.js and warn about security
             let pm2_js = dir.join("pm2.config.js");
             if pm2_js.exists() {
-                return self.load_ecosystem_js(&pm2_js).await;
+                tracing::warn!(
+                    "Found pm2.config.js at {} but JavaScript configs are disabled for security. \
+                     Please convert to pm2.config.json or ecosystem.config.json format.",
+                    pm2_js.display()
+                );
             }
 
             // Try package.json
@@ -81,9 +94,14 @@ impl ConfigLoader {
             .map_err(|e| crate::Error::Config(format!("Failed to parse bunctl.json: {}", e)))
     }
 
+    #[allow(dead_code)]
     async fn load_ecosystem_js(&self, path: &Path) -> crate::Result<Config> {
-        let ecosystem = EcosystemConfig::load_from_js(path).await?;
-        Ok(self.ecosystem_to_config(ecosystem))
+        // This method is now deprecated for security reasons
+        Err(crate::Error::Config(format!(
+            "JavaScript config files are not supported for security reasons. \
+             Please convert {} to JSON format.",
+            path.display()
+        )))
     }
 
     async fn load_ecosystem_json(&self, path: &Path) -> crate::Result<Config> {
@@ -151,7 +169,12 @@ impl ConfigLoader {
                 self.load_ecosystem_json(path).await
             }
             ("js", _) if filename.contains("ecosystem") || filename.contains("pm2") => {
-                self.load_ecosystem_js(path).await
+                // JavaScript configs are disabled for security
+                Err(crate::Error::Config(format!(
+                    "JavaScript config files are not supported for security reasons. \
+                     Please convert {} to JSON format.",
+                    path.display()
+                )))
             }
             ("json", "package.json") => self.load_package_json(path).await,
             _ => {

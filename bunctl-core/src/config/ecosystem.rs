@@ -206,32 +206,15 @@ fn parse_memory_string(s: &str) -> Option<u64> {
 }
 
 impl EcosystemConfig {
-    pub async fn load_from_js(path: &Path) -> crate::Result<Self> {
-        // Execute the JS file with Bun and capture JSON output
-        let output = tokio::process::Command::new("bun")
-            .arg("--print")
-            .arg(format!(
-                "JSON.stringify(require('{}').apps || require('{}'))",
-                path.display(),
-                path.display()
-            ))
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(crate::Error::Config(format!(
-                "Failed to load ecosystem.config.js: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        let json = String::from_utf8(output.stdout)
-            .map_err(|e| crate::Error::Config(format!("Invalid UTF-8 in config: {}", e)))?;
-
-        let apps: Vec<EcosystemApp> = serde_json::from_str(&json)
-            .map_err(|e| crate::Error::Config(format!("Failed to parse config: {}", e)))?;
-
-        Ok(Self { apps })
+    pub async fn load_from_js(_path: &Path) -> crate::Result<Self> {
+        // SECURITY: Do not execute JavaScript files to prevent code injection attacks.
+        // ecosystem.config.js files must be converted to JSON format.
+        Err(crate::Error::Config(
+            "JavaScript config files are not supported for security reasons. \
+             Please convert your ecosystem.config.js to ecosystem.config.json format. \
+             Example: module.exports = { apps: [...] } should become { \"apps\": [...] }"
+                .to_string(),
+        ))
     }
 
     pub async fn load_from_json(path: &Path) -> crate::Result<Self> {
