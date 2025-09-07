@@ -56,7 +56,7 @@ pub trait ProcessSupervisor: Send + Sync {
     ) -> crate::Result<()>;
 
     fn events(&self) -> mpsc::Receiver<SupervisorEvent>;
-    
+
     /// Get process handle for an app if it exists in the registry
     fn get_handle(&self, app_id: &AppId) -> Option<ProcessHandle>;
 

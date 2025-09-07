@@ -545,7 +545,7 @@ impl ProcessSupervisor for WindowsSupervisor {
             rx
         })
     }
-    
+
     fn get_handle(&self, app_id: &AppId) -> Option<ProcessHandle> {
         self.registry.get(app_id)
     }
