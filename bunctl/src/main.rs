@@ -25,20 +25,18 @@ async fn main() -> anyhow::Result<()> {
         .await;
     }
 
-    // Set default log level for daemon mode
-    if is_daemon && std::env::var("RUST_LOG").is_err() {
-        let default_level =
-            std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-        unsafe {
-            std::env::set_var("RUST_LOG", default_level);
-        }
-    }
-
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+    // Create filter with appropriate default level for daemon mode
+    let filter = if is_daemon && std::env::var("RUST_LOG").is_err() {
         let default_level =
             std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
         EnvFilter::new(&default_level)
-    });
+    } else {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            let default_level =
+                std::env::var("BUNCTL_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+            EnvFilter::new(&default_level)
+        })
+    };
 
     // Check if we want to force console logging for daemon (for debugging)
     let force_console = std::env::var("BUNCTL_CONSOLE_LOG").is_ok();
