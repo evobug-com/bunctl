@@ -31,8 +31,9 @@ async fn test_load_bunctl_json() {
 
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "test-app");
-    assert_eq!(loaded.apps[0].command, "bun");
-    assert_eq!(loaded.apps[0].args, vec!["run", "server.ts"]);
+    // Security fix: commands are no longer parsed, so the full command string is preserved
+    assert_eq!(loaded.apps[0].command, "bun run server.ts");
+    assert_eq!(loaded.apps[0].args, Vec::<String>::new());
     assert_eq!(loaded.apps[0].max_memory, Some(536870912));
     assert_eq!(loaded.apps[0].max_cpu_percent, Some(50.0));
 }
@@ -67,8 +68,9 @@ async fn test_load_ecosystem_json() {
 
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "api");
-    assert!(loaded.apps[0].command.contains("bun"));
-    assert!(loaded.apps[0].command.contains("src/server.ts"));
+    // Security fix: interpreter and script are now separated
+    assert_eq!(loaded.apps[0].command, "bun");
+    assert_eq!(loaded.apps[0].args[0], "src/server.ts");
     assert_eq!(loaded.apps[0].max_memory, Some(512 * 1024 * 1024));
 }
 
@@ -150,8 +152,9 @@ async fn test_load_package_json_with_bunctl_section() {
 
     assert_eq!(loaded.apps.len(), 1);
     assert_eq!(loaded.apps[0].name, "my-app");
-    assert_eq!(loaded.apps[0].command, "bun");
-    assert_eq!(loaded.apps[0].args, vec!["run", "start"]);
+    // Security fix: commands are no longer parsed
+    assert_eq!(loaded.apps[0].command, "bun run start");
+    assert_eq!(loaded.apps[0].args, Vec::<String>::new());
     assert!(loaded.apps[0].auto_start);
 }
 

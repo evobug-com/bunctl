@@ -134,8 +134,8 @@ async fn test_ecosystem_config_json_format() {
     // Check first app (converted from ecosystem format)
     let web = &config.apps[0];
     assert_eq!(web.name, "web-app");
-    assert_eq!(web.command, "bun app.ts");
-    // args should be parsed from the args string
+    assert_eq!(web.command, "bun"); // Security fix: command and args are now separated
+    assert_eq!(web.args[0], "app.ts"); // Script is now first argument
     assert!(web.auto_start);
     assert_eq!(web.restart_policy, RestartPolicy::Always);
     assert_eq!(
@@ -253,7 +253,8 @@ async fn test_package_json_with_pm2_section() {
 
     let app = &config.apps[0];
     assert_eq!(app.name, "pm2-app");
-    assert_eq!(app.command, "node index.js");
+    assert_eq!(app.command, "node"); // Security fix: command and args are now separated
+    assert_eq!(app.args[0], "index.js"); // Script is now first argument
     assert_eq!(app.env.get("NODE_ENV"), Some(&"staging".to_string()));
     assert_eq!(app.restart_policy, RestartPolicy::Always);
 }

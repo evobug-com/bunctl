@@ -270,6 +270,41 @@ bunctl status --json | jq -r '.[] | select(.restarts > 10) | .name' |
 
 ---
 
+## 🔒 **Security**
+
+### Command Injection Prevention
+bunctl-rs v3.0.0+ includes critical security improvements to prevent command injection attacks:
+
+- **No Shell Parsing**: Commands and arguments are never passed through a shell interpreter
+- **Literal Arguments**: All command arguments are treated as literal strings
+- **Safe Configuration**: Shell metacharacters (`;`, `|`, `&`, `>`, etc.) are passed as-is to the process
+
+#### Configuration Security
+When defining commands in your configuration files, arguments must be explicitly separated:
+
+```json
+// ✅ SECURE - Arguments are properly separated
+{
+  "apps": [{
+    "name": "myapp",
+    "command": "bun",
+    "args": ["run", "script.js", "--port", "3000"]
+  }]
+}
+
+// ❌ INSECURE (pre-v3.0.0) - Could allow command injection
+{
+  "apps": [{
+    "name": "myapp",
+    "command": "bun run script.js --port 3000"  // This would be vulnerable to injection
+  }]
+}
+```
+
+This design ensures that user-controlled input in configuration files cannot be used to execute arbitrary commands, providing defense-in-depth security for your production deployments.
+
+---
+
 ## 🏗️ **Architecture**
 
 **Workspace:** `bunctl/` (CLI) • `bunctl-core/` (traits) • `bunctl-supervisor/` (OS-specific) • `bunctl-logging/` (async) • `bunctl-ipc/` (communication)
