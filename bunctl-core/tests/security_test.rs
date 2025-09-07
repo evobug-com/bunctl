@@ -117,3 +117,65 @@ async fn test_direct_js_file_load_fails() {
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("JavaScript config files are not supported"));
 }
+
+#[tokio::test]
+async fn test_ecosystem_json_loading_works() {
+    let temp_dir = TempDir::new().unwrap();
+    let json_path = temp_dir.path().join("ecosystem.config.json");
+    
+    let json_config = r#"{
+        "apps": [{
+            "name": "test-app",
+            "script": "./app.js",
+            "interpreter": "bun",
+            "max_restarts": 5,
+            "env": {
+                "NODE_ENV": "production",
+                "PORT": "3000"
+            }
+        }]
+    }"#;
+    
+    fs::write(&json_path, json_config).await.unwrap();
+    
+    // Test direct file loading
+    let loader = ConfigLoader::new();
+    let result = loader.load_file(&json_path).await;
+    assert!(result.is_ok(), "Failed to load ecosystem.config.json");
+    
+    let config = result.unwrap();
+    assert_eq!(config.apps.len(), 1);
+    assert_eq!(config.apps[0].name, "test-app");
+    assert_eq!(config.apps[0].command, "bun");
+    assert_eq!(config.apps[0].args, vec!["./app.js"]);
+    assert_eq!(config.apps[0].env.get("NODE_ENV"), Some(&"production".to_string()));
+    assert_eq!(config.apps[0].env.get("PORT"), Some(&"3000".to_string()));
+}
+
+#[tokio::test]
+async fn test_pm2_json_loading_works() {
+    let temp_dir = TempDir::new().unwrap();
+    let json_path = temp_dir.path().join("pm2.config.json");
+    
+    let json_config = r#"{
+        "apps": [{
+            "name": "pm2-app",
+            "script": "server.ts",
+            "interpreter": "none",
+            "max_memory_restart": "512M"
+        }]
+    }"#;
+    
+    fs::write(&json_path, json_config).await.unwrap();
+    
+    let loader = ConfigLoader::new();
+    let result = loader.load_file(&json_path).await;
+    assert!(result.is_ok(), "Failed to load pm2.config.json");
+    
+    let config = result.unwrap();
+    assert_eq!(config.apps.len(), 1);
+    assert_eq!(config.apps[0].name, "pm2-app");
+    assert_eq!(config.apps[0].command, "server.ts");
+    assert_eq!(config.apps[0].args.len(), 0);
+    assert_eq!(config.apps[0].max_memory, Some(512 * 1024 * 1024));
+}

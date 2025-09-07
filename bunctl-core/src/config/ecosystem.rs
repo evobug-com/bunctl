@@ -209,12 +209,11 @@ impl EcosystemConfig {
     pub async fn load_from_js(_path: &Path) -> crate::Result<Self> {
         // SECURITY: Do not execute JavaScript files to prevent code injection attacks.
         // ecosystem.config.js files must be converted to JSON format.
-        Err(crate::Error::Config(
+        Err(crate::Error::Config(format!(
             "JavaScript config files are not supported for security reasons. \
-             Please convert your ecosystem.config.js to ecosystem.config.json format. \
-             Example: module.exports = { apps: [...] } should become { \"apps\": [...] }"
-                .to_string(),
-        ))
+             Please convert {} to JSON format.",
+            _path.display()
+        )))
     }
 
     pub async fn load_from_json(path: &Path) -> crate::Result<Self> {

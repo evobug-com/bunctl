@@ -47,8 +47,8 @@ impl ConfigLoader {
             // Check for ecosystem.config.js and warn about security
             let ecosystem_js = dir.join("ecosystem.config.js");
             if ecosystem_js.exists() {
-                tracing::warn!(
-                    "Found ecosystem.config.js at {} but JavaScript configs are disabled for security. \
+                tracing::info!(
+                    "Found ecosystem.config.js at {} - JavaScript configs are disabled for security. \
                      Please convert to ecosystem.config.json format.",
                     ecosystem_js.display()
                 );
@@ -68,8 +68,8 @@ impl ConfigLoader {
             // Check for pm2.config.js and warn about security
             let pm2_js = dir.join("pm2.config.js");
             if pm2_js.exists() {
-                tracing::warn!(
-                    "Found pm2.config.js at {} but JavaScript configs are disabled for security. \
+                tracing::info!(
+                    "Found pm2.config.js at {} - JavaScript configs are disabled for security. \
                      Please convert to pm2.config.json or ecosystem.config.json format.",
                     pm2_js.display()
                 );
@@ -92,16 +92,6 @@ impl ConfigLoader {
         let content = tokio::fs::read_to_string(path).await?;
         serde_json::from_str(&content)
             .map_err(|e| crate::Error::Config(format!("Failed to parse bunctl.json: {}", e)))
-    }
-
-    #[allow(dead_code)]
-    async fn load_ecosystem_js(&self, path: &Path) -> crate::Result<Config> {
-        // This method is now deprecated for security reasons
-        Err(crate::Error::Config(format!(
-            "JavaScript config files are not supported for security reasons. \
-             Please convert {} to JSON format.",
-            path.display()
-        )))
     }
 
     async fn load_ecosystem_json(&self, path: &Path) -> crate::Result<Config> {
