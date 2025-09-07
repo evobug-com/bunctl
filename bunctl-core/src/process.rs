@@ -271,29 +271,10 @@ impl ProcessBuilder {
     }
 
     pub async fn spawn(self) -> crate::Result<Child> {
-        // Parse command string to handle cases like "bun run script.js"
-        let (actual_command, mut parsed_args) =
-            if self.command.contains(' ') && self.args.is_empty() {
-                // Use shell-words to properly handle quoted arguments
-                match shell_words::split(&self.command) {
-                    Ok(parts) if !parts.is_empty() => {
-                        // Safe array access using first() to avoid panic
-                        if let Some(first) = parts.first() {
-                            let cmd = first.clone();
-                            let args = parts.into_iter().skip(1).collect();
-                            (cmd, args)
-                        } else {
-                            (self.command.clone(), Vec::new())
-                        }
-                    }
-                    _ => (self.command.clone(), Vec::new()),
-                }
-            } else {
-                (self.command.clone(), Vec::new())
-            };
-
-        // Combine parsed args with explicitly set args
-        parsed_args.extend(self.args);
+        // Do not parse command strings to avoid command injection vulnerabilities
+        // Commands must be explicitly separated into command and args
+        let actual_command = self.command.clone();
+        let parsed_args = self.args.clone();
 
         tracing::info!(
             "Spawning process: command='{}', args={:?}",

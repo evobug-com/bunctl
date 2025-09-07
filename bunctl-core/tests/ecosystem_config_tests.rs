@@ -39,8 +39,9 @@ fn test_ecosystem_app_basic() {
 
     let config = app.to_app_config();
     assert_eq!(config.name, "test-app");
-    assert!(config.command.contains("bun"));
-    assert!(config.command.contains("server.ts"));
+    // Security fix: interpreter and script are now separated
+    assert_eq!(config.command, "bun");
+    assert_eq!(config.args[0], "server.ts");
     assert_eq!(config.restart_policy, RestartPolicy::Always);
     assert_eq!(config.max_memory, Some(512 * 1024 * 1024));
     assert_eq!(config.backoff.base_delay_ms, 1000);

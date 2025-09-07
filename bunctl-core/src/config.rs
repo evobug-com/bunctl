@@ -388,24 +388,14 @@ fn validate_daemon_config(daemon: &DaemonConfig) -> Result<(), String> {
 
 impl From<AppConfigRaw> for AppConfig {
     fn from(raw: AppConfigRaw) -> Self {
-        // If args weren't provided, try to parse them from the command
+        // Security: Do not parse shell commands to prevent command injection
+        // Users must provide command and args separately in the config
         let (command, args) = if let Some(args) = raw.args {
             (raw.command, args)
         } else {
-            // Use shell-words to properly parse the command
-            match shell_words::split(&raw.command) {
-                Ok(parts) if !parts.is_empty() => {
-                    // Safe array access using first() to avoid panic
-                    if let Some(first) = parts.first() {
-                        let command = first.clone();
-                        let args = parts.into_iter().skip(1).collect();
-                        (command, args)
-                    } else {
-                        (raw.command, Vec::new())
-                    }
-                }
-                _ => (raw.command, Vec::new()),
-            }
+            // If args are not explicitly provided, assume command has no arguments
+            // Do NOT attempt to parse the command string for security reasons
+            (raw.command, Vec::new())
         };
 
         AppConfig {

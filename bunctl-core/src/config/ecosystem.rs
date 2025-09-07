@@ -99,17 +99,28 @@ impl EcosystemApp {
         let interpreter = self.interpreter.as_deref().unwrap_or("bun");
         let _script_path = PathBuf::from(&self.script);
 
-        let command = if interpreter == "none" {
-            self.script.clone()
+        // Separate command and args to prevent command injection
+        let (command, mut base_args) = if interpreter == "none" {
+            (self.script.clone(), Vec::new())
         } else {
-            format!("{} {}", interpreter, self.script)
+            // Keep interpreter as command, script as first argument
+            (interpreter.to_string(), vec![self.script.clone()])
         };
 
-        let args = self
+        // Parse additional args if provided (with warning about security)
+        let additional_args = self
             .args
             .as_ref()
-            .map(|a| shell_words::split(a).unwrap_or_default())
+            .map(|a| {
+                // Split args by whitespace only, no shell parsing for security
+                a.split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
+
+        base_args.extend(additional_args);
+        let args = base_args;
 
         let cwd = self
             .cwd
